@@ -4,7 +4,9 @@ Falls back to a neutral 0.5 score for any chunk the model fails to score.
 Run with the Poker44-subnet package installed (pip install -e Poker44-subnet).
 """
 
-from __future__ import annotations
+# NOTE: do NOT enable `from __future__ import annotations` here — bittensor's
+# axon.attach() introspects forward()'s annotation and calls issubclass() on it,
+# which requires the real DetectionSynapse class, not a stringized annotation.
 
 import hashlib
 import time
