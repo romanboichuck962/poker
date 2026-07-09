@@ -102,6 +102,25 @@ def _hand_features(hand: Dict[str, Any]) -> Optional[Dict[str, float]]:
             prev_aggr_by_other = False
     fold_to_bet = folds_to_bet / faced_bet if faced_bet else 0.0
 
+    # action-sequence patterns (mechanical bot lines): scan hero actions in order
+    check_raise = bet_fold = call_raise = limp_reraise = 0
+    by_street: Dict[str, list] = {}
+    for a in hero_actions:
+        by_street.setdefault(a.get("street"), []).append(a.get("action_type"))
+    for street, seq in by_street.items():
+        for i in range(len(seq) - 1):
+            if seq[i] == "check" and seq[i + 1] in AGGRESSIVE:
+                check_raise += 1
+            if seq[i] == "call" and seq[i + 1] == "raise":
+                call_raise += 1
+                if street == "preflop":
+                    limp_reraise += 1
+    hero_seq = [a.get("action_type") for a in hero_actions]
+    for i in range(len(hero_seq) - 1):
+        if hero_seq[i] == "bet" and "fold" in hero_seq[i + 1:]:
+            bet_fold += 1
+            break
+
     # bet-sizing statistics (hero aggressive actions)
     sizes_bb, pot_ratios, round_flags = [], [], []
     for a in hero_actions:
@@ -182,6 +201,12 @@ def _hand_features(hand: Dict[str, Any]) -> Optional[Dict[str, float]]:
         "std_pot_ratio": float(pot_arr.std()),
         "roundness": float(np.mean(round_flags)) if round_flags else 0.0,
         "n_aggr_actions": float(n_aggr),
+        "check_raise": float(check_raise),
+        "bet_fold": float(bet_fold),
+        "call_raise": float(call_raise),
+        "limp_reraise": float(limp_reraise),
+        "_pot_ratios": pot_ratios,   # popped for group-level pooling
+        "_sizes_bb": sizes_bb,
     }
 
 
@@ -194,12 +219,19 @@ _HAND_KEYS = [
     "won", "stack_bb", "rel_pos", "n_players", "total_pot_bb", "mean_size_bb",
     "std_size_bb", "size_cv", "min_size_bb", "max_size_bb", "mean_pot_ratio",
     "std_pot_ratio", "roundness", "n_aggr_actions",
+    "check_raise", "bet_fold", "call_raise", "limp_reraise",
 ]
+
+# pooled pot-ratio histogram buckets (bots concentrate; humans spread)
+_POT_BUCKETS = [0.0, 0.4, 0.6, 0.8, 1.1, np.inf]
 
 _EXTRA_KEYS = [
     "group_hands", "distinct_size_frac", "action_entropy", "vpip_mean",
     "vpip_std", "total_actions", "mean_roundness", "size_bb_global_cv",
     "pot_ratio_global_cv", "aggr_consistency", "showdown_rate", "win_rate",
+    "pot_hist_0", "pot_hist_1", "pot_hist_2", "pot_hist_3", "pot_hist_4",
+    "pot_modal_dominance", "pot_ratio_entropy", "distinct_pot_frac",
+    "size_bb_entropy", "distinct_size_bb_frac", "n_aggr_pool",
 ]
 
 FEATURE_NAMES = (
@@ -217,6 +249,10 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
     rows = [f for f in (_hand_features(h) for h in (group or [])) if f is not None]
     if not rows:
         return np.zeros(FEATURE_DIM, dtype=float)
+
+    # pool every aggressive-action size across the whole group before aggregating
+    pooled_pr = [pr for r in rows for pr in r.pop("_pot_ratios")]
+    pooled_bb = [s for r in rows for s in r.pop("_sizes_bb")]
 
     mat = np.array([[r[k] for k in _HAND_KEYS] for r in rows], dtype=float)
     means = mat.mean(axis=0)
@@ -244,6 +280,28 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         col = col[col > 0]
         return float(col.std() / col.mean()) if len(col) and col.mean() > 0 else 0.0
 
+    # pooled bet-sizing distribution over all aggressive actions in the group
+    pr_arr = np.array(pooled_pr) if pooled_pr else np.array([])
+    if pr_arr.size:
+        hist, _ = np.histogram(pr_arr, bins=_POT_BUCKETS)
+        hist = hist / hist.sum()
+        modal_dominance = float(hist.max())
+        pot_entropy = float(-np.sum([p * math.log(p) for p in hist if p > 0]))
+        distinct_pot_frac = len(set(np.round(pr_arr, 1).tolist())) / len(pr_arr)
+    else:
+        hist = np.zeros(len(_POT_BUCKETS) - 1)
+        modal_dominance = pot_entropy = distinct_pot_frac = 0.0
+
+    bb_arr = np.array(pooled_bb) if pooled_bb else np.array([])
+    if bb_arr.size:
+        rounded_bb = np.round(bb_arr, 1)
+        vals, cnts = np.unique(rounded_bb, return_counts=True)
+        probs_bb = cnts / cnts.sum()
+        size_bb_entropy = float(-np.sum(probs_bb * np.log(probs_bb)))
+        distinct_size_bb_frac = len(vals) / len(bb_arr)
+    else:
+        size_bb_entropy = distinct_size_bb_frac = 0.0
+
     vpip_series = mat[:, _HAND_KEYS.index("vpip")]
     aggr_series = mat[:, _HAND_KEYS.index("aggr_frac")]
     extras = np.array([
@@ -259,6 +317,13 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         1.0 - float(aggr_series.std()),  # high = very consistent aggression
         float(mat[:, _HAND_KEYS.index("saw_showdown")].mean()),
         float(mat[:, _HAND_KEYS.index("won")].mean()),
+        float(hist[0]), float(hist[1]), float(hist[2]), float(hist[3]), float(hist[4]),
+        modal_dominance,
+        pot_entropy,
+        distinct_pot_frac,
+        size_bb_entropy,
+        distinct_size_bb_frac,
+        float(len(pooled_pr)),
     ])
     return np.concatenate([means, stds, q25, q75, extras])
 

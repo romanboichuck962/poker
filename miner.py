@@ -46,9 +46,9 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker44-neptune-ensemble",
-                "model_version": "3",
-                "framework": "scikit-learn soft-voting (xgboost+lightgbm+catboost+extratrees+mlp)",
+                "model_name": "poker44-neptune-stack",
+                "model_version": "4",
+                "framework": "scikit-learn stacking (optuna-tuned lightgbm+catboost+xgboost+extratrees, logistic meta)",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "open_source": True,
@@ -66,7 +66,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "172 hero-centric behavioral features + calibrated soft-voting ensemble with FPR-budget score recentering.",
+                "notes": "199 hero-centric behavioral features (incl. action-sequence patterns and bet-sizing distribution) + calibrated Optuna-tuned stacking ensemble with FPR-budget score recentering.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

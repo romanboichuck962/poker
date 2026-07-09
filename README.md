@@ -4,10 +4,10 @@ Open-source miner model for the Poker44 subnet (Bittensor netuid 126).
 
 ## Model
 
-- **Name:** poker44-neptune-ensemble
-- **Version:** 3
-- **Framework:** scikit-learn calibrated soft-voting ensemble
-  (XGBoost + LightGBM + CatBoost + ExtraTrees + MLP)
+- **Name:** poker44-neptune-stack
+- **Version:** 4
+- **Framework:** scikit-learn stacking ensemble — Optuna-tuned
+  LightGBM + CatBoost + XGBoost + ExtraTrees, logistic-regression meta-learner
 - **License:** MIT
 - **Inference mode:** remote
 
@@ -17,57 +17,68 @@ probability in `[0, 1]` per chunk.
 
 ## Architecture
 
-1. **Feature extraction** ([`model.py`](model.py)): 172 hero-centric behavioral
-   features per chunk group. Per-hand signals — action rates (VPIP, PFR,
-   VPIP/PFR gap, fold/call/check/raise/bet), aggression factor, per-street
-   aggression (preflop/flop/turn/river), fold-to-bet response, street
-   progression, showdown/win rates, stack depth, position, and **bet-sizing
-   regularity** (mean/std/CV/min/max in big blinds, pot-relative sizing, and a
-   "roundness" score that fires on clean bb increments or canonical pot
-   fractions — a strong bot tell). Aggregated across the group as mean, std,
-   25th and 75th percentiles, plus group-level consistency signals (distinct-
-   sizing fraction, action-mix entropy, global sizing coefficient of variation,
-   aggression consistency).
-2. **Classifier**: sigmoid-calibrated **soft-voting ensemble** selected among
-   12 candidates (logistic regression, RBF SVM, random forest, extra trees, two
-   sklearn GBDTs, XGBoost, LightGBM, CatBoost, MLP, a soft-voting ensemble, and
-   a stacking ensemble).
-3. **Score recentering**: a monotone map places the out-of-fold 5%-FPR
-   operating point at 0.5, so hard predictions respect the validator's
-   false-positive budget without changing rank metrics.
+1. **Feature extraction** ([`model.py`](model.py)): **199 hero-centric features**
+   per chunk group.
+   - Per-hand behavior: action rates (VPIP, PFR, gap, fold/call/check/raise/bet),
+     aggression, per-street aggression (preflop→river), fold-to-bet response,
+     street progression, showdown/win, stack, position, bet sizing in bb and
+     pot-relative terms, and a "roundness" score.
+   - **Action-sequence patterns** (mechanical bot lines): check-raise, bet-fold,
+     call-raise, limp-reraise counts.
+   - Aggregated across the group as mean / std / 25th / 75th percentile.
+   - **Group bet-sizing distribution**: pooled pot-ratio histogram, modal-size
+     dominance, sizing entropy, distinct-size fraction — bots concentrate on a
+     few exact sizes; humans spread.
+2. **Classifier**: sigmoid-calibrated **stacking ensemble** of three
+   Optuna-tuned gradient boosters plus extra trees, combined by logistic
+   regression. Selected among 12+ candidates including tuned singles and a
+   tuned soft-voting ensemble.
+3. **Score recentering**: a monotone map places the 5%-FPR operating point at
+   0.5 so hard predictions respect the validator's false-positive budget.
 
 ## Selection & Training
 
-Two scripts, both trained **exclusively on the public Poker44 training
-benchmark** (`https://api.poker44.net/api/v1/benchmark`, all 45 published
-release dates, 1,186 chunk groups):
+Trained **exclusively on the public Poker44 training benchmark**
+(`https://api.poker44.net/api/v1/benchmark`, all 45 published releases, 1,186
+chunk groups). Pipeline:
 
-- [`train.py`](train.py) — 12-algorithm comparison with date-grouped
-  cross-validation.
-- [`robust_select.py`](robust_select.py) — final selection by
-  cross-validated **per-window validator reward** (mirroring how the live
-  validator scores each evaluation window), using the subnet's own `reward()`.
+- [`train.py`](train.py) — 12-algorithm baseline comparison.
+- [`tune_v4.py`](tune_v4.py) — Optuna tuning (50 trials each) of LightGBM,
+  CatBoost, XGBoost, then candidate comparison by cross-validated per-window
+  validator reward.
+- [`deploy_v4.py`](deploy_v4.py) — builds the tuned stacking ensemble and
+  deploys the compact calibrated artifact.
 
-Out-of-fold generalization (date-grouped 5-fold CV over the full dataset):
+Out-of-fold generalization (date-grouped 5-fold CV over all 1,186 groups):
 
-| model | per-window reward | OOF AUC | OOF AP |
-|---|---|---|---|
-| **soft-voting (deployed)** | **0.7914** | **0.7882** | **0.8164** |
-| extra trees | 0.7839 | 0.7792 | 0.8080 |
-| catboost | 0.7838 | 0.7771 | 0.8082 |
-| stacking | 0.7822 | 0.7818 | 0.8121 |
-| random forest | 0.7634 | 0.7726 | 0.8004 |
+| metric | value |
+|---|---|
+| OOF ROC AUC | 0.788 |
+| OOF average precision | 0.815 |
+| CV per-window reward | 0.785 |
 
-The deployed artifact is the winner refit on all data.
+Held-out newest release (2026-07-09, trained on all prior releases):
+
+| metric | value |
+|---|---|
+| validator reward | **0.802** |
+| ROC AUC | 0.830 |
+| average precision | 0.845 |
+| bot recall @ 5% FPR | **0.521** |
+
+The deployed artifact is the tuned stacking ensemble refit on all data.
 
 ## Files
 
 - [`miner.py`](miner.py) — serving miner (implementation file in the manifest)
 - [`model.py`](model.py) — features + serving wrapper (implementation file in the manifest)
-- [`train.py`](train.py) — 12-algorithm comparison
-- [`robust_select.py`](robust_select.py) — per-window-reward final selection
-- `artifacts/poker44_model.joblib` — deployed model (its sha256 is published as
+- [`train.py`](train.py) — baseline comparison
+- [`tune_v4.py`](tune_v4.py) — Optuna tuning + per-window-reward selection
+- [`deploy_v4.py`](deploy_v4.py) — build + deploy tuned stack
+- [`robust_select.py`](robust_select.py) — per-window-reward evaluation helpers
+- `artifacts/poker44_model.joblib` — deployed model (sha256 published as
   `artifact_sha256` in the manifest)
+- `artifacts/tuned_params.txt` — the Optuna-selected hyperparameters
 
 ## Reproduce
 
@@ -75,8 +86,8 @@ The deployed artifact is the winner refit on all data.
 pip install -r requirements.txt
 pip install -e /path/to/Poker44-subnet
 python /path/to/Poker44-subnet/scripts/download_benchmark.py --out data/benchmark
-python train.py           # broad comparison
-python robust_select.py   # final selection + deploy artifact
+python tune_v4.py      # tune + compare
+python deploy_v4.py    # build + deploy tuned stack
 ```
 
 ## Training Data Statement
