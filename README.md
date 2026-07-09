@@ -4,10 +4,11 @@ Open-source miner model for the Poker44 subnet (Bittensor netuid 126).
 
 ## Model
 
-- **Name:** poker44-neptune-stack
-- **Version:** 5
-- **Framework:** scikit-learn stacking ensemble — Optuna-tuned
-  LightGBM + CatBoost + XGBoost + ExtraTrees, logistic-regression meta-learner
+- **Name:** poker44-neptune-hybrid
+- **Version:** 6
+- **Framework:** hybrid — Optuna-tuned GBDT stacking
+  (LightGBM + CatBoost + XGBoost + ExtraTrees, logistic meta) **blended 60/40
+  with a PyTorch attention-MIL neural set model**
 - **License:** MIT
 - **Inference mode:** remote
 
@@ -33,10 +34,14 @@ probability in `[0, 1]` per chunk.
      context (street, facing-aggression, pot bucket), per-context repeat rate,
      pure-policy fraction, and action-bigram entropy — a bot applies a
      near-fixed context→action policy (low entropy), a human mixes.
-2. **Classifier**: sigmoid-calibrated **stacking ensemble** of three
-   Optuna-tuned gradient boosters plus extra trees, combined by logistic
-   regression. Selected among 12+ candidates including tuned singles and a
-   tuned soft-voting ensemble.
+2. **Classifier — hybrid of two complementary views**:
+   - a sigmoid-calibrated **GBDT stacking ensemble** (Optuna-tuned LightGBM +
+     CatBoost + XGBoost + ExtraTrees, logistic meta) over the 207 group features;
+   - a **PyTorch attention-MIL set model** that encodes each hand's per-hand
+     feature vector with an MLP and pools hands with masked attention (learned
+     aggregation over the *set* of hands, instead of fixed moments).
+   The two are blended 60/40 (GBDT/neural). The neural model is weaker alone but
+   only ~0.39 correlated with the GBDT stack, so the blend adds real signal.
 3. **Score recentering**: a monotone map places the 5%-FPR operating point at
    0.5 so hard predictions respect the validator's false-positive budget.
 
@@ -53,13 +58,14 @@ chunk groups). Pipeline:
 - [`deploy_v4.py`](deploy_v4.py) — builds the tuned stacking ensemble and
   deploys the compact calibrated artifact.
 
-Out-of-fold generalization (date-grouped 5-fold CV over all 1,186 groups):
+Out-of-fold generalization (date-grouped 5-fold CV over all 1,186 groups),
+GBDT stack vs the hybrid blend:
 
-| metric | value |
-|---|---|
-| OOF ROC AUC | 0.793 |
-| OOF average precision | 0.820 |
-| CV per-window reward | 0.790 |
+| metric | GBDT stack | **hybrid (deployed)** |
+|---|---|---|
+| OOF ROC AUC | 0.793 | **0.816** |
+| OOF average precision | 0.820 | **0.835** |
+| CV per-window reward | 0.790 | **0.827** |
 
 Held-out newest release (2026-07-09, trained on all prior releases):
 
@@ -67,8 +73,11 @@ Held-out newest release (2026-07-09, trained on all prior releases):
 |---|---|
 | validator reward | **0.825** |
 | ROC AUC | 0.853 |
-| average precision | 0.845 |
-| bot recall @ 5% FPR | **0.575** |
+| average precision | 0.865 |
+| bot recall @ 5% FPR | 0.575 |
+
+The neural set model scores OOF AUC 0.727 alone but correlates only 0.39 with the
+GBDT stack, so blending lifts OOF AUC from 0.793 to 0.816.
 
 The deployed artifact is the tuned stacking ensemble refit on all data.
 

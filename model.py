@@ -424,19 +424,91 @@ def recenter_scores(prob: np.ndarray, threshold: float) -> np.ndarray:
     return np.clip(np.where(prob < threshold, low, high), 0.0, 1.0)
 
 
+# ---------------------------------------------------------------------------
+# Attention-MIL set model over per-hand feature vectors (complementary view to
+# the tabular GBDT stack). A chunk group is a SET of hands; this learns how to
+# pool across hands instead of using fixed mean/std/quantile moments.
+# ---------------------------------------------------------------------------
+MAXH = 40  # hands per group are capped at ~40 in the benchmark
+
+
+def hand_matrix(group: List[Dict[str, Any]]) -> tuple:
+    """Padded per-hand feature tensor [MAXH, len(_HAND_KEYS)] + mask [MAXH]."""
+    rows = [f for f in (_hand_features(h) for h in (group or [])) if f is not None]
+    fdim = len(_HAND_KEYS)
+    mat = np.zeros((MAXH, fdim), dtype=np.float32)
+    msk = np.zeros(MAXH, dtype=np.float32)
+    for i, r in enumerate(rows[:MAXH]):
+        mat[i] = [r[k] for k in _HAND_KEYS]
+        msk[i] = 1.0
+    return mat, msk
+
+
+def _build_attn_mil(fdim: int):
+    import torch
+    import torch.nn as nn
+
+    class AttnMIL(nn.Module):
+        def __init__(self, fdim, hidden=64, p=0.35):
+            super().__init__()
+            self.enc = nn.Sequential(nn.Linear(fdim, hidden), nn.ReLU(), nn.Dropout(p),
+                                     nn.Linear(hidden, hidden), nn.ReLU())
+            self.attn = nn.Linear(hidden, 1)
+            self.head = nn.Sequential(nn.Dropout(p + 0.1), nn.Linear(hidden * 2, 1))
+
+        def forward(self, x, mask):
+            h = self.enc(x)
+            a = self.attn(h).squeeze(-1)
+            a = a.masked_fill(mask == 0, -1e9).softmax(-1)
+            attn_pool = (h * a.unsqueeze(-1)).sum(1)
+            mean_pool = (h * mask.unsqueeze(-1)).sum(1) / mask.sum(1, keepdim=True).clamp(min=1)
+            return self.head(torch.cat([attn_pool, mean_pool], -1)).squeeze(-1)
+
+    return AttnMIL(fdim)
+
+
 class Poker44Model:
-    """Serving wrapper: joblib artifact {pipeline, threshold} over group features."""
+    """Serving wrapper.
+
+    Supports two artifact formats:
+      - {"pipeline", "threshold"}                       -> tabular GBDT only
+      - {"pipeline", "neural_state", "feat_mean",        -> hybrid GBDT + attn-MIL
+         "feat_std", "blend_w", "threshold"}                blended by fixed weight
+    """
 
     def __init__(self, artifact_path: Path | str = MODEL_ARTIFACT):
         import joblib
 
         artifact = joblib.load(artifact_path)
+        self.neural = None
         if isinstance(artifact, dict):
             self.pipeline = artifact["pipeline"]
             self.threshold = float(artifact.get("threshold", 0.5))
+            if artifact.get("neural_state") is not None:
+                import torch
+
+                self.blend_w = float(artifact["blend_w"])
+                self.feat_mean = np.asarray(artifact["feat_mean"], dtype=np.float32)
+                self.feat_std = np.asarray(artifact["feat_std"], dtype=np.float32)
+                self.neural = _build_attn_mil(len(_HAND_KEYS))
+                self.neural.load_state_dict(artifact["neural_state"])
+                self.neural.eval()
+                self._torch = torch
         else:  # backward compatibility with bare-pipeline artifacts
             self.pipeline = artifact
             self.threshold = 0.5
+
+    def _neural_prob(self, groups: List[List[Dict[str, Any]]]) -> np.ndarray:
+        torch = self._torch
+        mats, msks = [], []
+        for g in groups:
+            m, s = hand_matrix(g)
+            mats.append((m - self.feat_mean) / self.feat_std * s[:, None])
+            msks.append(s)
+        X = torch.tensor(np.stack(mats))
+        M = torch.tensor(np.stack(msks))
+        with torch.no_grad():
+            return torch.sigmoid(self.neural(X, M)).numpy()
 
     def score_chunk(self, group: List[Dict[str, Any]]) -> float:
         return self.score_chunks([group])[0]
@@ -446,9 +518,12 @@ class Poker44Model:
             return []
         features = np.vstack([extract_group_features(g) for g in groups])
         prob = self.pipeline.predict_proba(features)[:, 1]
+        if self.neural is not None:
+            neural_prob = self._neural_prob(groups)
+            prob = (1.0 - self.blend_w) * prob + self.blend_w * neural_prob
         scores = recenter_scores(prob, self.threshold)
         # A group with no parseable hero hands yields an all-zero feature vector;
-        # return a neutral 0.5 rather than whatever the classifier extrapolates.
+        # return a neutral 0.5 rather than whatever the models extrapolate.
         empty = ~features.any(axis=1)
         scores[empty] = 0.5
         return scores.astype(float).tolist()
