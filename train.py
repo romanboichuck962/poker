@@ -19,12 +19,16 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import (
     ExtraTreesClassifier,
     GradientBoostingClassifier,
     HistGradientBoostingClassifier,
     RandomForestClassifier,
+    StackingClassifier,
+    VotingClassifier,
 )
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -32,6 +36,8 @@ from sklearn.model_selection import GroupKFold, cross_val_predict, cross_val_sco
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from xgboost import XGBClassifier
 
 from model import extract_group_features, recenter_scores
 
@@ -54,28 +60,63 @@ def load_dataset(data_dir: Path):
 
 
 def candidate_models(seed: int = 42):
+    xgb = XGBClassifier(
+        n_estimators=500, learning_rate=0.03, max_depth=4, subsample=0.8,
+        colsample_bytree=0.8, reg_lambda=2.0, min_child_weight=3,
+        eval_metric="logloss", tree_method="hist", n_jobs=-1, random_state=seed,
+    )
+    lgbm = LGBMClassifier(
+        n_estimators=600, learning_rate=0.03, num_leaves=31, subsample=0.8,
+        colsample_bytree=0.8, reg_lambda=2.0, min_child_samples=8,
+        n_jobs=-1, random_state=seed, verbose=-1,
+    )
+    cat = CatBoostClassifier(
+        iterations=600, learning_rate=0.03, depth=5, l2_leaf_reg=3.0,
+        random_seed=seed, verbose=0, allow_writing_files=False,
+    )
+    extra = ExtraTreesClassifier(
+        n_estimators=800, min_samples_leaf=2, n_jobs=-1, random_state=seed
+    )
+    rf = RandomForestClassifier(
+        n_estimators=800, min_samples_leaf=2, n_jobs=-1, random_state=seed
+    )
+    mlp = make_pipeline(
+        StandardScaler(),
+        MLPClassifier(hidden_layer_sizes=(128, 64), alpha=1e-3,
+                      max_iter=2000, random_state=seed),
+    )
     return {
         "logreg": make_pipeline(
             StandardScaler(), LogisticRegression(max_iter=2000, C=0.5, random_state=seed)
         ),
-        "random_forest": RandomForestClassifier(
-            n_estimators=600, min_samples_leaf=3, n_jobs=-1, random_state=seed
+        "svm_rbf": make_pipeline(
+            StandardScaler(), SVC(C=2.0, gamma="scale", probability=True, random_state=seed)
         ),
-        "extra_trees": ExtraTreesClassifier(
-            n_estimators=600, min_samples_leaf=3, n_jobs=-1, random_state=seed
-        ),
+        "random_forest": rf,
+        "extra_trees": extra,
         "hist_gbdt": HistGradientBoostingClassifier(
-            max_iter=400, learning_rate=0.06, max_leaf_nodes=31,
+            max_iter=500, learning_rate=0.05, max_leaf_nodes=31,
             l2_regularization=1.0, random_state=seed
         ),
         "gbdt": GradientBoostingClassifier(
             n_estimators=300, learning_rate=0.05, max_depth=3,
             subsample=0.8, random_state=seed
         ),
-        "mlp": make_pipeline(
-            StandardScaler(),
-            MLPClassifier(hidden_layer_sizes=(64, 32), alpha=1e-3,
-                          max_iter=1500, random_state=seed),
+        "xgboost": xgb,
+        "lightgbm": lgbm,
+        "catboost": cat,
+        "mlp": mlp,
+        "voting_soft": VotingClassifier(
+            estimators=[("xgb", xgb), ("lgbm", lgbm), ("cat", cat),
+                        ("extra", extra), ("mlp", mlp)],
+            voting="soft", n_jobs=-1,
+        ),
+        "stack": StackingClassifier(
+            estimators=[("xgb", xgb), ("lgbm", lgbm), ("cat", cat),
+                        ("extra", extra), ("rf", rf)],
+            final_estimator=LogisticRegression(max_iter=2000, C=1.0),
+            stack_method="predict_proba",
+            cv=4, n_jobs=-1,
         ),
     }
 

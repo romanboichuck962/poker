@@ -1,8 +1,13 @@
-"""Poker44 bot-detection model: hero-centric behavioral features + sklearn classifier.
+"""Poker44 bot-detection model: hero-centric behavioral features + classifier.
 
 A chunk group is a list of poker hands sharing one focus ("hero") seat. The
 model aggregates the hero's behavior across the group into a fixed feature
 vector and predicts the probability that the hero is a bot.
+
+Feature design targets the tells that separate bots from humans in a payload
+with no timing data: bet-sizing regularity ("roundness" and low variance),
+per-street aggression structure, response to aggression, and cross-hand
+consistency of decisions.
 """
 
 from __future__ import annotations
@@ -19,6 +24,24 @@ MODEL_ARTIFACT = Path(__file__).resolve().parent / "artifacts" / "poker44_model.
 STREET_ORDER = {"preflop": 0, "flop": 1, "turn": 2, "river": 3, "showdown": 4}
 AGGRESSIVE = ("bet", "raise")
 PASSIVE = ("call", "check")
+# Common human pot-fraction bet sizes; bots often snap to an exact subset.
+POT_FRACTIONS = np.array([0.25, 0.33, 0.4, 0.5, 0.6, 0.66, 0.75, 1.0, 1.25, 1.5, 2.0])
+
+
+def _roundness(amount_bb: float, pot_ratio: Optional[float]) -> float:
+    """1.0 if a size looks 'clean' (round bb or a canonical pot fraction)."""
+    score = 0.0
+    if amount_bb > 0:
+        # multiples of 0.5bb
+        if abs(round(amount_bb * 2) / 2 - amount_bb) < 0.02:
+            score = max(score, 1.0)
+        # whole bb
+        if abs(round(amount_bb) - amount_bb) < 0.02:
+            score = max(score, 1.0)
+    if pot_ratio and pot_ratio > 0:
+        if float(np.min(np.abs(POT_FRACTIONS - pot_ratio))) < 0.02:
+            score = max(score, 1.0)
+    return score
 
 
 def _hand_features(hand: Dict[str, Any]) -> Optional[Dict[str, float]]:
@@ -31,36 +54,71 @@ def _hand_features(hand: Dict[str, Any]) -> Optional[Dict[str, float]]:
     actions = hand.get("actions") or []
     players = hand.get("players") or []
     outcome = hand.get("outcome") or {}
+    streets = hand.get("streets") or []
     bb = float(metadata.get("bb") or 0.02) or 0.02
 
     hero_actions = [a for a in actions if a.get("actor_seat") == hero_seat]
     counts = Counter(a.get("action_type") for a in hero_actions)
     n_hero = max(1, len(hero_actions))
 
-    # street progression of the hero
     hero_streets = [STREET_ORDER.get(a.get("street"), 0) for a in hero_actions]
     max_street = max(hero_streets) if hero_streets else 0
 
-    # preflop behavior
+    def street_rates(street: str) -> tuple[float, float]:
+        acts = [a for a in hero_actions if a.get("street") == street]
+        if not acts:
+            return 0.0, 0.0
+        c = Counter(a.get("action_type") for a in acts)
+        aggr = sum(c.get(k, 0) for k in AGGRESSIVE) / len(acts)
+        passive = sum(c.get(k, 0) for k in PASSIVE) / len(acts)
+        return aggr, passive
+
+    pre_aggr, pre_pass = street_rates("preflop")
+    flop_aggr, flop_pass = street_rates("flop")
+    turn_aggr, _ = street_rates("turn")
+    river_aggr, _ = street_rates("river")
+
     pre = [a for a in hero_actions if a.get("street") == "preflop"]
     vpip = any(a.get("action_type") in ("call", "bet", "raise") for a in pre)
     pfr = any(a.get("action_type") in ("bet", "raise") for a in pre)
     folded_pre = any(a.get("action_type") == "fold" for a in pre)
+    n_pre_raises = sum(1 for a in pre if a.get("action_type") == "raise")
 
-    # sizing behavior (in big blinds)
-    sizes = [
-        float(a.get("normalized_amount_bb") or 0.0)
-        for a in hero_actions
-        if a.get("action_type") in AGGRESSIVE and (a.get("normalized_amount_bb") or 0) > 0
-    ]
-    # pot-relative sizing for aggressive actions
-    pot_ratios = []
+    # response to aggression: did hero fold facing a bet/raise?
+    faced_bet = folds_to_bet = 0
+    prev_aggr_by_other = False
+    for a in actions:
+        seat = a.get("actor_seat")
+        atype = a.get("action_type")
+        if seat == hero_seat:
+            if prev_aggr_by_other:
+                faced_bet += 1
+                if atype == "fold":
+                    folds_to_bet += 1
+            prev_aggr_by_other = False
+        elif atype in AGGRESSIVE:
+            prev_aggr_by_other = True
+        elif atype in ("call", "check", "fold"):
+            prev_aggr_by_other = False
+    fold_to_bet = folds_to_bet / faced_bet if faced_bet else 0.0
+
+    # bet-sizing statistics (hero aggressive actions)
+    sizes_bb, pot_ratios, round_flags = [], [], []
     for a in hero_actions:
         if a.get("action_type") in AGGRESSIVE:
+            amt_bb = float(a.get("normalized_amount_bb") or 0.0)
             pot_before = float(a.get("pot_before") or 0.0)
             amt = float(a.get("amount") or 0.0)
-            if pot_before > 0 and amt > 0:
-                pot_ratios.append(amt / pot_before)
+            pr = amt / pot_before if pot_before > 0 and amt > 0 else None
+            if amt_bb > 0:
+                sizes_bb.append(amt_bb)
+                round_flags.append(_roundness(amt_bb, pr))
+            if pr:
+                pot_ratios.append(pr)
+
+    sizes_arr = np.array(sizes_bb) if sizes_bb else np.array([0.0])
+    pot_arr = np.array(pot_ratios) if pot_ratios else np.array([0.0])
+    size_cv = float(sizes_arr.std() / sizes_arr.mean()) if sizes_arr.mean() > 0 else 0.0
 
     n_aggr = sum(counts.get(k, 0) for k in AGGRESSIVE)
     n_pass = sum(counts.get(k, 0) for k in PASSIVE)
@@ -72,55 +130,99 @@ def _hand_features(hand: Dict[str, Any]) -> Optional[Dict[str, float]]:
     payouts = outcome.get("payouts") or {}
     hero_uid = hero_player.get("player_uid")
     won = (hero_seat in winners) or (hero_uid in winners) or (
-        isinstance(payouts, dict) and str(hero_uid) in payouts and float(payouts.get(str(hero_uid)) or 0) > 0
+        isinstance(payouts, dict) and str(hero_uid) in payouts
+        and float(payouts.get(str(hero_uid)) or 0) > 0
     )
 
     button_seat = metadata.get("button_seat")
     seat_count = max(1, len(players))
     rel_pos = ((hero_seat - button_seat) % seat_count) / seat_count if button_seat is not None else 0.5
 
+    total_pot_bb = float(outcome.get("total_pot") or 0.0) / bb
+    n_board_streets = sum(1 for s in streets if isinstance(s, dict) and s.get("board_cards"))
+
     return {
         "n_actions": float(len(hero_actions)),
         "vpip": float(vpip),
         "pfr": float(pfr),
+        "vpip_pfr_gap": float(vpip) - float(pfr),
         "folded_pre": float(folded_pre),
+        "n_pre_raises": float(n_pre_raises),
         "fold_rate": counts.get("fold", 0) / n_hero,
         "call_rate": counts.get("call", 0) / n_hero,
         "check_rate": counts.get("check", 0) / n_hero,
         "raise_rate": counts.get("raise", 0) / n_hero,
         "bet_rate": counts.get("bet", 0) / n_hero,
         "aggression": n_aggr / max(1, n_pass),
+        "aggr_frac": n_aggr / n_hero,
+        "pre_aggr": pre_aggr,
+        "flop_aggr": flop_aggr,
+        "turn_aggr": turn_aggr,
+        "river_aggr": river_aggr,
+        "postflop_aggr": (flop_aggr + turn_aggr + river_aggr) / 3.0,
+        "fold_to_bet": fold_to_bet,
+        "faced_bet": float(faced_bet),
         "max_street": float(max_street),
         "saw_flop": float(max_street >= 1),
+        "saw_turn": float(max_street >= 2),
+        "saw_river": float(max_street >= 3),
         "saw_showdown": float(bool(outcome.get("showdown"))),
+        "n_board_streets": float(n_board_streets),
         "won": float(won),
         "stack_bb": stack_bb,
         "rel_pos": rel_pos,
         "n_players": float(len(players)),
-        "mean_size_bb": float(np.mean(sizes)) if sizes else 0.0,
-        "std_size_bb": float(np.std(sizes)) if len(sizes) > 1 else 0.0,
-        "mean_pot_ratio": float(np.mean(pot_ratios)) if pot_ratios else 0.0,
-        "std_pot_ratio": float(np.std(pot_ratios)) if len(pot_ratios) > 1 else 0.0,
+        "total_pot_bb": total_pot_bb,
+        "mean_size_bb": float(sizes_arr.mean()),
+        "std_size_bb": float(sizes_arr.std()),
+        "size_cv": size_cv,
+        "min_size_bb": float(sizes_arr.min()),
+        "max_size_bb": float(sizes_arr.max()),
+        "mean_pot_ratio": float(pot_arr.mean()),
+        "std_pot_ratio": float(pot_arr.std()),
+        "roundness": float(np.mean(round_flags)) if round_flags else 0.0,
+        "n_aggr_actions": float(n_aggr),
     }
 
 
 _HAND_KEYS = [
-    "n_actions", "vpip", "pfr", "folded_pre", "fold_rate", "call_rate",
-    "check_rate", "raise_rate", "bet_rate", "aggression", "max_street",
-    "saw_flop", "saw_showdown", "won", "stack_bb", "rel_pos", "n_players",
-    "mean_size_bb", "std_size_bb", "mean_pot_ratio", "std_pot_ratio",
+    "n_actions", "vpip", "pfr", "vpip_pfr_gap", "folded_pre", "n_pre_raises",
+    "fold_rate", "call_rate", "check_rate", "raise_rate", "bet_rate",
+    "aggression", "aggr_frac", "pre_aggr", "flop_aggr", "turn_aggr",
+    "river_aggr", "postflop_aggr", "fold_to_bet", "faced_bet", "max_street",
+    "saw_flop", "saw_turn", "saw_river", "saw_showdown", "n_board_streets",
+    "won", "stack_bb", "rel_pos", "n_players", "total_pot_bb", "mean_size_bb",
+    "std_size_bb", "size_cv", "min_size_bb", "max_size_bb", "mean_pot_ratio",
+    "std_pot_ratio", "roundness", "n_aggr_actions",
 ]
+
+_EXTRA_KEYS = [
+    "group_hands", "distinct_size_frac", "action_entropy", "vpip_mean",
+    "vpip_std", "total_actions", "mean_roundness", "size_bb_global_cv",
+    "pot_ratio_global_cv", "aggr_consistency", "showdown_rate", "win_rate",
+]
+
+FEATURE_NAMES = (
+    [f"mean_{k}" for k in _HAND_KEYS]
+    + [f"std_{k}" for k in _HAND_KEYS]
+    + [f"q25_{k}" for k in _HAND_KEYS]
+    + [f"q75_{k}" for k in _HAND_KEYS]
+    + _EXTRA_KEYS
+)
+FEATURE_DIM = len(FEATURE_NAMES)
 
 
 def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
     """Aggregate per-hand hero features over a chunk group into one vector."""
     rows = [f for f in (_hand_features(h) for h in (group or [])) if f is not None]
     if not rows:
-        return np.zeros(len(_HAND_KEYS) * 2 + 6, dtype=float)
+        return np.zeros(FEATURE_DIM, dtype=float)
 
     mat = np.array([[r[k] for k in _HAND_KEYS] for r in rows], dtype=float)
     means = mat.mean(axis=0)
     stds = mat.std(axis=0)
+    q25 = np.quantile(mat, 0.25, axis=0)
+    q75 = np.quantile(mat, 0.75, axis=0)
 
     # group-level consistency signals (bots tend to be more uniform)
     all_sizes = mat[:, _HAND_KEYS.index("mean_size_bb")]
@@ -129,14 +231,21 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         len(set(nonzero_sizes.tolist())) / len(nonzero_sizes) if len(nonzero_sizes) else 0.0
     )
 
-    action_mix = mat[:, [_HAND_KEYS.index(k) for k in ("fold_rate", "call_rate", "check_rate", "raise_rate", "bet_rate")]].mean(axis=0)
+    action_mix = mat[:, [_HAND_KEYS.index(k) for k in
+                         ("fold_rate", "call_rate", "check_rate", "raise_rate", "bet_rate")]].mean(axis=0)
     total = action_mix.sum()
     entropy = 0.0
     if total > 0:
         probs = action_mix / total
         entropy = float(-np.sum([p * math.log(p) for p in probs if p > 0]))
 
+    def global_cv(key: str) -> float:
+        col = mat[:, _HAND_KEYS.index(key)]
+        col = col[col > 0]
+        return float(col.std() / col.mean()) if len(col) and col.mean() > 0 else 0.0
+
     vpip_series = mat[:, _HAND_KEYS.index("vpip")]
+    aggr_series = mat[:, _HAND_KEYS.index("aggr_frac")]
     extras = np.array([
         float(len(rows)),
         distinct_size_frac,
@@ -144,15 +253,14 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         float(vpip_series.mean()),
         float(vpip_series.std()),
         float(mat[:, _HAND_KEYS.index("n_actions")].sum()),
+        float(mat[:, _HAND_KEYS.index("roundness")].mean()),
+        global_cv("mean_size_bb"),
+        global_cv("mean_pot_ratio"),
+        1.0 - float(aggr_series.std()),  # high = very consistent aggression
+        float(mat[:, _HAND_KEYS.index("saw_showdown")].mean()),
+        float(mat[:, _HAND_KEYS.index("won")].mean()),
     ])
-    return np.concatenate([means, stds, extras])
-
-
-FEATURE_NAMES = (
-    [f"mean_{k}" for k in _HAND_KEYS]
-    + [f"std_{k}" for k in _HAND_KEYS]
-    + ["group_hands", "distinct_size_frac", "action_entropy", "vpip_mean", "vpip_std", "total_actions"]
-)
+    return np.concatenate([means, stds, q25, q75, extras])
 
 
 def recenter_scores(prob: np.ndarray, threshold: float) -> np.ndarray:
@@ -191,4 +299,9 @@ class Poker44Model:
             return []
         features = np.vstack([extract_group_features(g) for g in groups])
         prob = self.pipeline.predict_proba(features)[:, 1]
-        return recenter_scores(prob, self.threshold).astype(float).tolist()
+        scores = recenter_scores(prob, self.threshold)
+        # A group with no parseable hero hands yields an all-zero feature vector;
+        # return a neutral 0.5 rather than whatever the classifier extrapolates.
+        empty = ~features.any(axis=1)
+        scores[empty] = 0.5
+        return scores.astype(float).tolist()
