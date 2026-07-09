@@ -84,17 +84,25 @@ def _hand_features(hand: Dict[str, Any]) -> Optional[Dict[str, float]]:
     folded_pre = any(a.get("action_type") == "fold" for a in pre)
     n_pre_raises = sum(1 for a in pre if a.get("action_type") == "raise")
 
-    # response to aggression: did hero fold facing a bet/raise?
+    # response to aggression + per-decision context (for group-level policy determinism):
+    # record (context, action) for every hero decision so the group can measure how
+    # predictable the hero is given the game state (bots follow a near-fixed policy).
     faced_bet = folds_to_bet = 0
     prev_aggr_by_other = False
+    decisions = []  # (context_key, action_type), stashed for group-level pooling
     for a in actions:
         seat = a.get("actor_seat")
         atype = a.get("action_type")
         if seat == hero_seat:
+            facing = 1 if prev_aggr_by_other else 0
             if prev_aggr_by_other:
                 faced_bet += 1
                 if atype == "fold":
                     folds_to_bet += 1
+            pot_before = float(a.get("pot_before") or 0.0) / bb
+            pot_bucket = 0 if pot_before < 5 else 1 if pot_before < 15 else 2 if pot_before < 40 else 3
+            context = (a.get("street"), facing, pot_bucket)
+            decisions.append((context, atype))
             prev_aggr_by_other = False
         elif atype in AGGRESSIVE:
             prev_aggr_by_other = True
@@ -207,6 +215,8 @@ def _hand_features(hand: Dict[str, Any]) -> Optional[Dict[str, float]]:
         "limp_reraise": float(limp_reraise),
         "_pot_ratios": pot_ratios,   # popped for group-level pooling
         "_sizes_bb": sizes_bb,
+        "_decisions": decisions,     # (context, action) per hero decision
+        "_hero_seq": hero_seq,       # ordered hero action types (for n-grams)
     }
 
 
@@ -232,6 +242,10 @@ _EXTRA_KEYS = [
     "pot_hist_0", "pot_hist_1", "pot_hist_2", "pot_hist_3", "pot_hist_4",
     "pot_modal_dominance", "pot_ratio_entropy", "distinct_pot_frac",
     "size_bb_entropy", "distinct_size_bb_frac", "n_aggr_pool",
+    # policy-determinism signals: bots follow a near-fixed policy given context
+    "cond_action_entropy", "policy_determinism", "context_coverage",
+    "mean_context_repeat", "bigram_entropy", "repeat_action_rate",
+    "unconditional_action_entropy", "n_decisions",
 ]
 
 FEATURE_NAMES = (
@@ -253,6 +267,8 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
     # pool every aggressive-action size across the whole group before aggregating
     pooled_pr = [pr for r in rows for pr in r.pop("_pot_ratios")]
     pooled_bb = [s for r in rows for s in r.pop("_sizes_bb")]
+    pooled_decisions = [d for r in rows for d in r.pop("_decisions")]
+    pooled_seqs = [r.pop("_hero_seq") for r in rows]
 
     mat = np.array([[r[k] for k in _HAND_KEYS] for r in rows], dtype=float)
     means = mat.mean(axis=0)
@@ -324,8 +340,74 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         size_bb_entropy,
         distinct_size_bb_frac,
         float(len(pooled_pr)),
+        *_policy_features(pooled_decisions, pooled_seqs),
     ])
     return np.concatenate([means, stds, q25, q75, extras])
+
+
+def _policy_features(decisions, seqs):
+    """Determinism of the hero's decision policy across the group.
+
+    A bot applies a near-fixed mapping from game context to action, so its
+    conditional action entropy is low and its per-context behavior repeats.
+    Humans mix strategies, raising these entropies. Returns 8 features aligned
+    with the last 8 entries of _EXTRA_KEYS.
+    """
+    from collections import Counter, defaultdict
+
+    def entropy(counter):
+        total = sum(counter.values())
+        if total <= 0:
+            return 0.0
+        return float(-sum((c / total) * math.log(c / total) for c in counter.values() if c))
+
+    # conditional P(action | context)
+    by_ctx = defaultdict(Counter)
+    action_counts = Counter()
+    for ctx, act in decisions:
+        by_ctx[ctx][act] += 1
+        action_counts[act] += 1
+    n_dec = len(decisions)
+
+    if n_dec:
+        weighted_cond_ent, weighted_repeat = 0.0, 0.0
+        for ctx, counter in by_ctx.items():
+            w = sum(counter.values()) / n_dec
+            weighted_cond_ent += w * entropy(counter)
+            weighted_repeat += w * (max(counter.values()) / sum(counter.values()))
+        # fraction of contexts where one action dominates (>=80%): pure-policy signal
+        determinism = np.mean([
+            1.0 if (max(c.values()) / sum(c.values())) >= 0.8 else 0.0
+            for c in by_ctx.values()
+        ]) if by_ctx else 0.0
+        context_coverage = len(by_ctx) / n_dec
+        uncond_ent = entropy(action_counts)
+    else:
+        weighted_cond_ent = weighted_repeat = determinism = 0.0
+        context_coverage = uncond_ent = 0.0
+
+    # consecutive action bigrams across each hand's hero sequence
+    bigrams = Counter()
+    repeats = total_bg = 0
+    for seq in seqs:
+        for i in range(len(seq) - 1):
+            bigrams[(seq[i], seq[i + 1])] += 1
+            total_bg += 1
+            if seq[i] == seq[i + 1]:
+                repeats += 1
+    bigram_ent = entropy(bigrams)
+    repeat_rate = repeats / total_bg if total_bg else 0.0
+
+    return [
+        weighted_cond_ent,          # cond_action_entropy (low = bot)
+        float(determinism),         # policy_determinism (high = bot)
+        context_coverage,           # context_coverage
+        weighted_repeat,            # mean_context_repeat (high = bot)
+        bigram_ent,                 # bigram_entropy
+        repeat_rate,                # repeat_action_rate
+        uncond_ent,                 # unconditional_action_entropy
+        float(n_dec),               # n_decisions
+    ]
 
 
 def recenter_scores(prob: np.ndarray, threshold: float) -> np.ndarray:

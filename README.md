@@ -5,7 +5,7 @@ Open-source miner model for the Poker44 subnet (Bittensor netuid 126).
 ## Model
 
 - **Name:** poker44-neptune-stack
-- **Version:** 4
+- **Version:** 5
 - **Framework:** scikit-learn stacking ensemble — Optuna-tuned
   LightGBM + CatBoost + XGBoost + ExtraTrees, logistic-regression meta-learner
 - **License:** MIT
@@ -17,7 +17,7 @@ probability in `[0, 1]` per chunk.
 
 ## Architecture
 
-1. **Feature extraction** ([`model.py`](model.py)): **199 hero-centric features**
+1. **Feature extraction** ([`model.py`](model.py)): **207 hero-centric features**
    per chunk group.
    - Per-hand behavior: action rates (VPIP, PFR, gap, fold/call/check/raise/bet),
      aggression, per-street aggression (preflop→river), fold-to-bet response,
@@ -29,6 +29,10 @@ probability in `[0, 1]` per chunk.
    - **Group bet-sizing distribution**: pooled pot-ratio histogram, modal-size
      dominance, sizing entropy, distinct-size fraction — bots concentrate on a
      few exact sizes; humans spread.
+   - **Policy-determinism signals**: conditional action entropy given game
+     context (street, facing-aggression, pot bucket), per-context repeat rate,
+     pure-policy fraction, and action-bigram entropy — a bot applies a
+     near-fixed context→action policy (low entropy), a human mixes.
 2. **Classifier**: sigmoid-calibrated **stacking ensemble** of three
    Optuna-tuned gradient boosters plus extra trees, combined by logistic
    regression. Selected among 12+ candidates including tuned singles and a
@@ -53,18 +57,18 @@ Out-of-fold generalization (date-grouped 5-fold CV over all 1,186 groups):
 
 | metric | value |
 |---|---|
-| OOF ROC AUC | 0.788 |
-| OOF average precision | 0.815 |
-| CV per-window reward | 0.785 |
+| OOF ROC AUC | 0.793 |
+| OOF average precision | 0.820 |
+| CV per-window reward | 0.790 |
 
 Held-out newest release (2026-07-09, trained on all prior releases):
 
 | metric | value |
 |---|---|
-| validator reward | **0.802** |
-| ROC AUC | 0.830 |
+| validator reward | **0.825** |
+| ROC AUC | 0.853 |
 | average precision | 0.845 |
-| bot recall @ 5% FPR | **0.521** |
+| bot recall @ 5% FPR | **0.575** |
 
 The deployed artifact is the tuned stacking ensemble refit on all data.
 
