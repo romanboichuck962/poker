@@ -484,15 +484,22 @@ class Poker44Model:
         if isinstance(artifact, dict):
             self.pipeline = artifact["pipeline"]
             self.threshold = float(artifact.get("threshold", 0.5))
-            if artifact.get("neural_state") is not None:
+            # support a single neural_state or an ensemble list neural_states
+            states = artifact.get("neural_states")
+            if states is None and artifact.get("neural_state") is not None:
+                states = [artifact["neural_state"]]
+            if states:
                 import torch
 
                 self.blend_w = float(artifact["blend_w"])
                 self.feat_mean = np.asarray(artifact["feat_mean"], dtype=np.float32)
                 self.feat_std = np.asarray(artifact["feat_std"], dtype=np.float32)
-                self.neural = _build_attn_mil(len(_HAND_KEYS))
-                self.neural.load_state_dict(artifact["neural_state"])
-                self.neural.eval()
+                self.neural = []
+                for sd in states:
+                    net = _build_attn_mil(len(_HAND_KEYS))
+                    net.load_state_dict(sd)
+                    net.eval()
+                    self.neural.append(net)
                 self._torch = torch
         else:  # backward compatibility with bare-pipeline artifacts
             self.pipeline = artifact
@@ -508,7 +515,8 @@ class Poker44Model:
         X = torch.tensor(np.stack(mats))
         M = torch.tensor(np.stack(msks))
         with torch.no_grad():
-            return torch.sigmoid(self.neural(X, M)).numpy()
+            preds = [torch.sigmoid(net(X, M)).numpy() for net in self.neural]
+        return np.mean(preds, axis=0)
 
     def score_chunk(self, group: List[Dict[str, Any]]) -> float:
         return self.score_chunks([group])[0]
@@ -518,7 +526,7 @@ class Poker44Model:
             return []
         features = np.vstack([extract_group_features(g) for g in groups])
         prob = self.pipeline.predict_proba(features)[:, 1]
-        if self.neural is not None:
+        if self.neural:
             neural_prob = self._neural_prob(groups)
             prob = (1.0 - self.blend_w) * prob + self.blend_w * neural_prob
         scores = recenter_scores(prob, self.threshold)

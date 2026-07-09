@@ -5,10 +5,10 @@ Open-source miner model for the Poker44 subnet (Bittensor netuid 126).
 ## Model
 
 - **Name:** poker44-neptune-hybrid
-- **Version:** 6
+- **Version:** 7
 - **Framework:** hybrid — Optuna-tuned GBDT stacking
-  (LightGBM + CatBoost + XGBoost + ExtraTrees, logistic meta) **blended 60/40
-  with a PyTorch attention-MIL neural set model**
+  (LightGBM + CatBoost + XGBoost + ExtraTrees, logistic meta) **blended 50/50
+  with a 3-seed augmented PyTorch attention-MIL neural ensemble**
 - **License:** MIT
 - **Inference mode:** remote
 
@@ -39,9 +39,12 @@ probability in `[0, 1]` per chunk.
      CatBoost + XGBoost + ExtraTrees, logistic meta) over the 207 group features;
    - a **PyTorch attention-MIL set model** that encodes each hand's per-hand
      feature vector with an MLP and pools hands with masked attention (learned
-     aggregation over the *set* of hands, instead of fixed moments).
-   The two are blended 60/40 (GBDT/neural). The neural model is weaker alone but
-   only ~0.39 correlated with the GBDT stack, so the blend adds real signal.
+     aggregation over the *set* of hands, instead of fixed moments). Trained
+     with **hand-dropout augmentation** (each step sees a random subset of the
+     hero's hands — a subset keeps the label) and **3-seed ensembling** to cut
+     variance on the small dataset.
+   The two are blended 50/50 (GBDT/neural). The neural model is weaker alone but
+   low-correlated with the GBDT stack, so the blend adds real signal.
 3. **Score recentering**: a monotone map places the 5%-FPR operating point at
    0.5 so hard predictions respect the validator's false-positive budget.
 
@@ -63,21 +66,17 @@ GBDT stack vs the hybrid blend:
 
 | metric | GBDT stack | **hybrid (deployed)** |
 |---|---|---|
-| OOF ROC AUC | 0.793 | **0.816** |
-| OOF average precision | 0.820 | **0.835** |
-| CV per-window reward | 0.790 | **0.827** |
+| OOF ROC AUC | 0.793 | **0.822** |
+| OOF average precision | 0.820 | **0.839** |
+| CV per-window reward | 0.790 | **0.831** |
 
-Held-out newest release (2026-07-09, trained on all prior releases):
+The augmented neural ensemble scores OOF AUC 0.766 alone (up from 0.727 without
+augmentation) and is low-correlated with the GBDT stack, so the 50/50 blend
+lifts OOF AUC from 0.793 to 0.822.
 
-| metric | value |
-|---|---|
-| validator reward | **0.825** |
-| ROC AUC | 0.853 |
-| average precision | 0.865 |
-| bot recall @ 5% FPR | 0.575 |
-
-The neural set model scores OOF AUC 0.727 alone but correlates only 0.39 with the
-GBDT stack, so blending lifts OOF AUC from 0.793 to 0.816.
+Held-out newest release (2026-07-09, trained on all prior releases): reward
+0.885, AUC 0.917, AP 0.895, recall@5%FPR 0.740 — strong, but a single-release
+number; the cross-validated 0.822 AUC above is the honest generalization figure.
 
 The deployed artifact is the tuned stacking ensemble refit on all data.
 

@@ -49,8 +49,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-hybrid",
-                "model_version": "6",
-                "framework": "GBDT stacking (optuna-tuned lgbm+cat+xgb+extratrees) blended 60/40 with a PyTorch attention-MIL set model",
+                "model_version": "7",
+                "framework": "GBDT stacking (optuna-tuned lgbm+cat+xgb+extratrees) blended 50/50 with a 3-seed augmented PyTorch attention-MIL ensemble",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "open_source": True,
@@ -68,7 +68,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "Hybrid: 207-feature Optuna-tuned GBDT stack blended 60/40 with an attention-MIL neural set model over per-hand features (complementary set-structure signal). FPR-budget score recentering.",
+                "notes": "Hybrid: 207-feature Optuna-tuned GBDT stack blended 50/50 with a 3-seed attention-MIL neural set-model ensemble (hand-dropout augmentation + seed ensembling) over per-hand features. FPR-budget score recentering.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
