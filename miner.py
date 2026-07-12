@@ -49,8 +49,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-hybrid",
-                "model_version": "7",
-                "framework": "GBDT stacking (optuna-tuned lgbm+cat+xgb+extratrees) blended 50/50 with a 3-seed augmented PyTorch attention-MIL ensemble",
+                "model_version": "9",
+                "framework": "Soft-blend (0.5/0.5) of a regularized ExtraTrees and a Logistic regressor over 162 coarsening-robust behavioral, policy-determinism, and bucket-snapped sizing features",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "open_source": True,
@@ -68,7 +68,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "Hybrid: 207-feature Optuna-tuned GBDT stack blended 50/50 with a 3-seed attention-MIL neural set-model ensemble (hand-dropout augmentation + seed ensembling) over per-hand features. FPR-budget score recentering.",
+                "notes": "Robustness-first bot detector selected by strict temporal forward-chaining. Drops non-transferable bet-amount features, adds bucket-snapped sizing-concentration features that survive the eval's amount coarsening, and blends a regularized ExtraTrees with a Logistic regressor for out-of-distribution stability. FPR-budget score recentering.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

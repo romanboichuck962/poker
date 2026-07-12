@@ -235,6 +235,36 @@ _HAND_KEYS = [
 # pooled pot-ratio histogram buckets (bots concentrate; humans spread)
 _POT_BUCKETS = [0.0, 0.4, 0.6, 0.8, 1.1, np.inf]
 
+# the validator's visible bb bucket grid (payload_view._VISIBLE_BB_BUCKETS) and a
+# coarse pot-fraction grid, used to recover the quantized size the eval snapped
+# to before adding per-hand jitter.
+_VIS_BUCKETS = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0,
+                         24.0, 32.0, 48.0, 64.0, 100.0])
+_PFRAC_GRID = np.array([0.0, 0.33, 0.5, 0.66, 0.75, 1.0, 1.5, 2.0])
+
+
+def _coarse_sizing_features(pooled_bb, pooled_pr):
+    """5 transferable size-concentration features from bucket-snapped bets."""
+    bb = np.array([v for v in pooled_bb if v and v > 0], dtype=float)
+    if bb.size == 0:
+        return (0.0, 0.0, 0.0, 0.0, 0.0)
+    snapped = _VIS_BUCKETS[np.argmin(np.abs(_VIS_BUCKETS[None, :] - bb[:, None]), axis=1)]
+    _, cnts = np.unique(snapped, return_counts=True)
+    p = cnts / cnts.sum()
+    ent = float(-(p * np.log(p)).sum())
+    modal = float(p.max())
+    diversity = len(cnts) / bb.size
+    pr = np.array([v for v in pooled_pr if v and v > 0], dtype=float)
+    if pr.size:
+        snp = _PFRAC_GRID[np.argmin(np.abs(_PFRAC_GRID[None, :] - pr[:, None]), axis=1)]
+        _, c2 = np.unique(snp, return_counts=True)
+        p2 = c2 / c2.sum()
+        pent = float(-(p2 * np.log(p2)).sum())
+        pmod = float(p2.max())
+    else:
+        pent = pmod = 0.0
+    return (ent, modal, diversity, pent, pmod)
+
 _EXTRA_KEYS = [
     "group_hands", "distinct_size_frac", "action_entropy", "vpip_mean",
     "vpip_std", "total_actions", "mean_roundness", "size_bb_global_cv",
@@ -242,6 +272,12 @@ _EXTRA_KEYS = [
     "pot_hist_0", "pot_hist_1", "pot_hist_2", "pot_hist_3", "pot_hist_4",
     "pot_modal_dominance", "pot_ratio_entropy", "distinct_pot_frac",
     "size_bb_entropy", "distinct_size_bb_frac", "n_aggr_pool",
+    # coarsening-SURVIVABLE sizing concentration: bets are snapped back to the
+    # validator's visible bb bucket (discarding the non-transferable per-hand
+    # jitter), then we measure how concentrated the hero's sizing is. Bots
+    # reuse a few sizes; humans spread. Transfers across eval instances.
+    "coarse_bucket_ent", "coarse_bucket_modal", "coarse_bucket_diversity",
+    "coarse_potfrac_ent", "coarse_potfrac_modal",
     # policy-determinism signals: bots follow a near-fixed policy given context
     "cond_action_entropy", "policy_determinism", "context_coverage",
     "mean_context_repeat", "bigram_entropy", "repeat_action_rate",
@@ -340,6 +376,7 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         size_bb_entropy,
         distinct_size_bb_frac,
         float(len(pooled_pr)),
+        *_coarse_sizing_features(pooled_bb, pooled_pr),
         *_policy_features(pooled_decisions, pooled_seqs),
     ])
     return np.concatenate([means, stds, q25, q75, extras])
