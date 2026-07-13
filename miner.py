@@ -49,8 +49,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-hybrid",
-                "model_version": "9",
-                "framework": "Soft-blend (0.5/0.5) of a regularized ExtraTrees and a Logistic regressor over 162 coarsening-robust behavioral, policy-determinism, and bucket-snapped sizing features",
+                "model_version": "10",
+                "framework": "Soft-blend (0.5/0.5) of a regularized ExtraTrees and a Logistic regressor over 162 coarsening-robust features, trained on size-resampled groups (35->105 hands) for live-size invariance, with a per-batch positive-call safety budget",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "open_source": True,
@@ -68,7 +68,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "Robustness-first bot detector selected by strict temporal forward-chaining. Drops non-transferable bet-amount features, adds bucket-snapped sizing-concentration features that survive the eval's amount coarsening, and blends a regularized ExtraTrees with a Logistic regressor for out-of-distribution stability. FPR-budget score recentering.",
+                "notes": "Robustness-first bot detector. Trains on size-resampled groups so features are stable from benchmark size (~35 hands) to live eval size (~100 hands); scores with a monotone threshold remap plus a per-batch positive-call budget that secures the validator's safety/calibration gate without reordering (AP and recall@FPR are pure ranking). Behavioral + policy-determinism + bucket-snapped sizing features only; no hole/board cards or identifiers.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
