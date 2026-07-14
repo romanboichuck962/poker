@@ -24,6 +24,7 @@ from poker44.utils.model_manifest import (
 from poker44.validator.synapse import DetectionSynapse
 
 from model import MODEL_ARTIFACT, Poker44Model
+from capture import capture_chunks
 
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -89,6 +90,9 @@ class Miner(BaseMinerNeuron):
         except Exception as err:  # never fail the synapse on a scoring error
             bt.logging.error(f"model scoring failed, using neutral scores: {err}")
             scores = [0.5] * len(chunks)
+        # Input-only, best-effort capture of the live eval distribution for
+        # offline benchmark->live feature-shift analysis. Never affects scoring.
+        capture_chunks(chunks)
         synapse.risk_scores = [float(s) for s in scores]
         synapse.predictions = [s >= 0.5 for s in scores]
         synapse.model_manifest = dict(self.model_manifest)
