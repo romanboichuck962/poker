@@ -49,8 +49,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-hybrid",
-                "model_version": "10",
-                "framework": "Soft-blend (0.5/0.5) of a regularized ExtraTrees and a Logistic regressor over 162 coarsening-robust features, trained on size-resampled groups (35->105 hands) for live-size invariance, with a per-batch positive-call safety budget",
+                "model_version": "11",
+                "framework": "In-batch rank-blend (weights 0.40/0.25/0.35) of a LightGBM, an ExtraTrees, and a PCA->MLP classifier over ~212 sanitization-robust behavioral, policy-determinism, bucket-snapped sizing, and hero-free action/hand-replay-signature features. Trained on validator-sanitized payloads (prepare_hand_for_miner) with size-resampling to live ~100-hand groups; FPR-anchored threshold from the human-score quantile plus a per-batch positive-call safety budget",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "open_source": True,
@@ -58,8 +58,9 @@ class Miner(BaseMinerNeuron):
                 "artifact_sha256": _sha256(MODEL_ARTIFACT),
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
-                    "(https://api.poker44.net/api/v1/benchmark), all published releases. "
-                    "See train.py for the full training procedure."
+                    "(https://api.poker44.net/api/v1/benchmark), all published releases, "
+                    "each hand passed through the public prepare_hand_for_miner sanitizer so "
+                    "training matches serving. See deploy_v11.py for the full training procedure."
                 ),
                 "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
@@ -68,7 +69,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "Robustness-first bot detector. Trains on size-resampled groups so features are stable from benchmark size (~35 hands) to live eval size (~100 hands); scores with a monotone threshold remap plus a per-batch positive-call budget that secures the validator's safety/calibration gate without reordering (AP and recall@FPR are pure ranking). Behavioral + policy-determinism + bucket-snapped sizing features only; no hole/board cards or identifiers.",
+                "notes": "Rank-blend bot detector. Every training hand is passed through the public prepare_hand_for_miner sanitizer (seat re-alias, button=0, bb-bucketed amounts, 5-8 action window) so training matches the served feed, and groups are size-resampled to the live ~100-hand regime. Three diverse learners (LightGBM, ExtraTrees, PCA->MLP) are fused by in-batch rank so no member's calibration can distort the blend; scoring applies a monotone threshold remap plus a per-batch positive-call budget that secures the validator's safety/calibration gate without reordering (AP and recall@FPR are pure ranking). Behavioral + policy-determinism + bucket-snapped sizing + hero-free action/hand-replay-signature features only; no hole/board cards or identifiers.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

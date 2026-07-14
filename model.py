@@ -285,21 +285,168 @@ _EXTRA_KEYS = [
     "unconditional_action_entropy", "n_decisions",
 ]
 
+# --- hero-free / all-actor features (robust to the validator windowing out the
+# hero, and capturing transferable bot tells the winners rely on) -------------
+_EXACT_BB_BUCKETS = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0,
+                              16.0, 24.0, 36.0, 56.0, 84.0, 126.0])  # validator grid
+_HF_PERHAND = [
+    "action_entropy", "actor_entropy", "street_entropy", "action_switch",
+    "actor_switch", "action_run", "actor_run", "pot_delta_mean", "pot_growth",
+    "pot_monotonic", "hero_share", "n_distinct_actors", "n_streets", "n_actions",
+    "bucket_amt_mean", "nonzero_amt_share",
+]
+_HF_GROUP = [
+    "stack_mean_bb", "stack_std_bb", "stack_iqr_bb", "raise_to_share", "call_to_share",
+    "action_sig_top", "action_sig_uniq", "role_sig_top", "role_sig_uniq",
+    "street_sig_top", "street_sig_uniq", "bucket_sig_top", "bucket_sig_uniq",
+    "high_aggr_rate", "low_entropy_rate", "zero_hero_rate", "hand_count", "hand_count_log",
+]
+_HFREE_KEYS = ([f"hf_mean_{k}" for k in _HF_PERHAND]
+               + [f"hf_std_{k}" for k in _HF_PERHAND]
+               + [f"hf_{k}" for k in _HF_GROUP])
+
 FEATURE_NAMES = (
     [f"mean_{k}" for k in _HAND_KEYS]
     + [f"std_{k}" for k in _HAND_KEYS]
     + [f"q25_{k}" for k in _HAND_KEYS]
     + [f"q75_{k}" for k in _HAND_KEYS]
     + _EXTRA_KEYS
+    + _HFREE_KEYS
 )
 FEATURE_DIM = len(FEATURE_NAMES)
+
+
+def _entropy_counts(counts) -> float:
+    tot = sum(counts)
+    if tot <= 0:
+        return 0.0
+    return float(-sum((c / tot) * math.log(c / tot) for c in counts if c > 0))
+
+
+def _switch_rate(seq) -> float:
+    if len(seq) < 2:
+        return 0.0
+    return float(sum(1 for i in range(1, len(seq)) if seq[i] != seq[i - 1]) / (len(seq) - 1))
+
+
+def _max_run_share(seq) -> float:
+    if not seq:
+        return 0.0
+    best = run = 1
+    for i in range(1, len(seq)):
+        run = run + 1 if seq[i] == seq[i - 1] else 1
+        best = max(best, run)
+    return float(best / len(seq))
+
+
+def _group_hero_free_features(group: List[Dict[str, Any]]) -> np.ndarray:
+    """All-actor (hero-optional) signals: robust when the validator windows out
+    the hero's actions. Captures turn-taking rhythm, action/hand-replay
+    signatures, pot-flow dynamics, and stack-depth structure."""
+    hands = group or []
+    n = len(hands)
+    n_ph = len(_HF_PERHAND)
+    if n == 0:
+        return np.zeros(len(_HFREE_KEYS), dtype=float)
+
+    perhand = []                      # list of per-hand scalar vectors (n_ph long)
+    act_sigs, role_sigs, street_sigs, bucket_sigs = [], [], [], []
+    stacks_bb, raise_present, call_present, action_total = [], 0, 0, 0
+    high_aggr = low_ent = zero_hero = 0
+
+    for h in hands:
+        meta = h.get("metadata") or {}
+        hero = meta.get("hero_seat")
+        bb = float(meta.get("bb") or 0.02) or 0.02
+        actions = h.get("actions") or []
+        a_types = [a.get("action_type") for a in actions]
+        actors = [a.get("actor_seat") for a in actions]
+        streets = [a.get("street") for a in actions]
+        na = len(actions)
+        action_total += na
+
+        for p in (h.get("players") or []):
+            ss = p.get("starting_stack")
+            if ss:
+                stacks_bb.append(float(ss) / bb)
+
+        a_ent = _entropy_counts(Counter(a_types).values())
+        aggr = sum(1 for t in a_types if t in ("bet", "raise")) / na if na else 0.0
+        hero_n = sum(1 for s in actors if s == hero)
+        if hero_n == 0:
+            zero_hero += 1
+        if aggr > 0.5:
+            high_aggr += 1
+        if a_ent < 0.5:
+            low_ent += 1
+
+        pb = [float(a.get("pot_before") or 0.0) / bb for a in actions]
+        pa = [float(a.get("pot_after") or 0.0) / bb for a in actions]
+        deltas = [pa[i] - pb[i] for i in range(min(len(pa), len(pb)))]
+        pot_delta_mean = float(np.mean(deltas)) if deltas else 0.0
+        pot_growth = (pa[-1] / pb[0]) if (pb and pb[0] > 0) else 0.0
+        pot_mono = float(np.mean([1.0 if d >= 0 else 0.0 for d in deltas])) if deltas else 0.0
+
+        amts = np.array([float(a.get("normalized_amount_bb") or 0.0) for a in actions])
+        nz = amts[amts > 0]
+        if nz.size:
+            snapped = _EXACT_BB_BUCKETS[np.argmin(np.abs(_EXACT_BB_BUCKETS[None, :] - nz[:, None]), axis=1)]
+            bucket_amt_mean = float(snapped.mean())
+            bkey = tuple(int(np.argmin(np.abs(_EXACT_BB_BUCKETS - v))) for v in amts)
+        else:
+            bucket_amt_mean = 0.0
+            bkey = tuple([0] * na)
+        nonzero_share = float(nz.size / na) if na else 0.0
+
+        raise_present += sum(1 for a in actions if a.get("raise_to") is not None)
+        call_present += sum(1 for a in actions if a.get("call_to") is not None)
+
+        perhand.append([
+            a_ent, _entropy_counts(Counter(actors).values()),
+            _entropy_counts(Counter(streets).values()),
+            _switch_rate(a_types), _switch_rate(actors),
+            _max_run_share(a_types), _max_run_share(actors),
+            pot_delta_mean, pot_growth, pot_mono,
+            (hero_n / na if na else 0.0), float(len(set(actors))),
+            float(len(set(streets))), float(na), bucket_amt_mean, nonzero_share,
+        ])
+        act_sigs.append(tuple(a_types))
+        role_sigs.append(tuple("H" if s == hero else "o" for s in actors))
+        street_sigs.append(tuple(streets))
+        bucket_sigs.append(bkey)
+
+    P = np.array(perhand, dtype=float)
+    means = P.mean(axis=0)
+    stds = P.std(axis=0)
+
+    def sig(sigs):
+        c = Counter(sigs)
+        return max(c.values()) / n, len(c) / n
+
+    a_top, a_uniq = sig(act_sigs)
+    r_top, r_uniq = sig(role_sigs)
+    s_top, s_uniq = sig(street_sigs)
+    b_top, b_uniq = sig(bucket_sigs)
+    st = np.array(stacks_bb) if stacks_bb else np.array([0.0])
+    grp = [
+        float(st.mean()), float(st.std()),
+        float(np.quantile(st, 0.75) - np.quantile(st, 0.25)),
+        (raise_present / action_total if action_total else 0.0),
+        (call_present / action_total if action_total else 0.0),
+        a_top, a_uniq, r_top, r_uniq, s_top, s_uniq, b_top, b_uniq,
+        high_aggr / n, low_ent / n, zero_hero / n, float(n), math.log1p(n),
+    ]
+    return np.concatenate([means, stds, np.array(grp, dtype=float)])
 
 
 def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
     """Aggregate per-hand hero features over a chunk group into one vector."""
     rows = [f for f in (_hand_features(h) for h in (group or [])) if f is not None]
     if not rows:
-        return np.zeros(FEATURE_DIM, dtype=float)
+        # Hero unidentifiable in every hand — keep the hero-free signal, which
+        # does not depend on matching the hero seat.
+        hero_part = np.zeros(FEATURE_DIM - len(_HFREE_KEYS), dtype=float)
+        return np.concatenate([hero_part, _group_hero_free_features(group)])
 
     # pool every aggressive-action size across the whole group before aggregating
     pooled_pr = [pr for r in rows for pr in r.pop("_pot_ratios")]
@@ -380,7 +527,8 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         *_coarse_sizing_features(pooled_bb, pooled_pr),
         *_policy_features(pooled_decisions, pooled_seqs),
     ])
-    return np.concatenate([means, stds, q25, q75, extras])
+    return np.concatenate([means, stds, q25, q75, extras,
+                           _group_hero_free_features(group)])
 
 
 def _policy_features(decisions, seqs):
@@ -514,6 +662,15 @@ def _build_attn_mil(fdim: int):
 _MAX_POS_FRAC = float(os.environ.get("POKER44_MAX_POS_FRAC", "0.16"))
 
 
+def _rank01(scores: np.ndarray) -> np.ndarray:
+    """Map scores to their in-batch rank in [0,1] (calibration-free)."""
+    s = np.asarray(scores, dtype=float)
+    n = s.size
+    if n <= 1:
+        return np.zeros(n, dtype=float)
+    return np.argsort(np.argsort(s, kind="stable"), kind="stable") / (n - 1.0)
+
+
 def _apply_batch_safety_budget(scores: np.ndarray, max_frac: float) -> np.ndarray:
     """Cap the fraction of >=0.5 calls per batch WITHOUT changing the ranking."""
     s = np.asarray(scores, dtype=float)
@@ -550,9 +707,18 @@ class Poker44Model:
 
         artifact = joblib.load(artifact_path)
         self.neural = None
+        self.rank_blend = False
         if isinstance(artifact, dict):
-            self.pipeline = artifact["pipeline"]
             self.threshold = float(artifact.get("threshold", 0.5))
+            if artifact.get("kind") == "rank_blend":
+                # list of {"est": fitted_classifier, "cols": column indices} plus
+                # per-member weights; members are fused by in-batch rank.
+                self.rank_blend = True
+                self.members = artifact["members"]
+                self.weights = np.asarray(artifact["weights"], dtype=float)
+                self.pipeline = None
+                return
+            self.pipeline = artifact["pipeline"]
             # support a single neural_state or an ensemble list neural_states
             states = artifact.get("neural_states")
             if states is None and artifact.get("neural_state") is not None:
@@ -594,10 +760,17 @@ class Poker44Model:
         if not groups:
             return []
         features = np.vstack([extract_group_features(g) for g in groups])
-        prob = self.pipeline.predict_proba(features)[:, 1]
-        if self.neural:
-            neural_prob = self._neural_prob(groups)
-            prob = (1.0 - self.blend_w) * prob + self.blend_w * neural_prob
+        if self.rank_blend:
+            agg = np.zeros(features.shape[0], dtype=float)
+            for mem, w in zip(self.members, self.weights):
+                p = mem["est"].predict_proba(features[:, mem["cols"]])[:, 1]
+                agg += w * _rank01(p)
+            prob = agg / self.weights.sum()
+        else:
+            prob = self.pipeline.predict_proba(features)[:, 1]
+            if self.neural:
+                neural_prob = self._neural_prob(groups)
+                prob = (1.0 - self.blend_w) * prob + self.blend_w * neural_prob
         scores = recenter_scores(prob, self.threshold)
         # A group with no parseable hero hands yields an all-zero feature vector;
         # place it just below the decision boundary (uninformative, not a bot
