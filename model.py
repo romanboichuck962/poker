@@ -12,6 +12,7 @@ consistency of decisions.
 
 from __future__ import annotations
 
+import gzip as _gzip
 import math
 import os
 from collections import Counter
@@ -305,6 +306,137 @@ _HFREE_KEYS = ([f"hf_mean_{k}" for k in _HF_PERHAND]
                + [f"hf_std_{k}" for k in _HF_PERHAND]
                + [f"hf_{k}" for k in _HF_GROUP])
 
+# --- approximate cross-hand redundancy (rp_*) --------------------------------
+# Exact-match signature features only fire when a bot replays a byte-identical
+# line. These capture APPROXIMATE repetition (near-identical lines, partial
+# n-gram overlap, low compressed size, low LZ complexity) — a stronger, more
+# universal bot tell. All values are ratios / per-hand-normalized so a 35-hand
+# and a 100-hand chunk are comparable. Ported from the peer "poker44-deep-detector".
+_RP_MAX_HANDS = 60
+_REDUND_KEYS = [
+    "rp_pair_jaccard_mean", "rp_vendi_frac", "rp_exact_dup_frac_action",
+    "rp_exact_dup_frac_rich", "rp_gzip_ratio", "rp_lz76_norm", "rp_entropy_rate",
+]
+
+
+def _rp_ngram_set(seq, size):
+    if len(seq) < size:
+        return frozenset()
+    return frozenset(tuple(seq[i:i + size]) for i in range(len(seq) - size + 1))
+
+
+def _rp_jaccard(a, b):
+    u = a | b
+    return len(a & b) / len(u) if u else 1.0
+
+
+def _rp_lz76_norm(s: str) -> float:
+    """Normalized Lempel-Ziv-76 complexity of a string (lower = more repetitive)."""
+    n = len(s)
+    if n <= 1:
+        return 0.0
+    i, k, l, c, k_max = 0, 1, 1, 1, 1
+    while True:
+        if s[i + k - 1] == s[l + k - 1]:
+            k += 1
+            if l + k > n:
+                c += 1
+                break
+        else:
+            if k > k_max:
+                k_max = k
+            i += 1
+            if i == l:
+                c += 1
+                l += k_max
+                if l + 1 > n:
+                    break
+                i, k, k_max = 0, 1, 1
+            else:
+                k = 1
+    return c / (n / math.log2(n)) if n > 1 else 0.0
+
+
+def _rp_entropy_rate(seq) -> float:
+    """Order-1 conditional entropy H(a_t | a_{t-1}) in bits (lower = predictable)."""
+    if len(seq) < 2:
+        return 0.0
+    pair_counts = Counter(zip(seq[:-1], seq[1:]))
+    prev_counts = Counter(seq[:-1])
+    total = float(len(seq) - 1)
+    h = 0.0
+    for (prev, _cur), cnt in pair_counts.items():
+        p_pair = cnt / total
+        p_cond = cnt / prev_counts[prev]
+        h -= p_pair * math.log2(p_cond)
+    return h
+
+
+def _redundancy_features(group: List[Dict[str, Any]]) -> np.ndarray:
+    """7 size-invariant approximate-redundancy features over the group's hands."""
+    hands = group or []
+    action_sigs, bucket_sigs, street_sigs = [], [], []
+    for h in hands:
+        actions = h.get("actions") or []
+        a_types = [a.get("action_type") or "?" for a in actions]
+        streets = [a.get("street") or "?" for a in actions]
+        amts = np.array([float(a.get("normalized_amount_bb") or 0.0) for a in actions])
+        if amts.size:
+            bidx = tuple(str(int(np.argmin(np.abs(_EXACT_BB_BUCKETS - v)))) for v in amts)
+        else:
+            bidx = tuple()
+        action_sigs.append(tuple(a_types))
+        street_sigs.append(tuple(streets))
+        bucket_sigs.append(bidx)
+
+    n_all = len(action_sigs)
+    order = ["rp_pair_jaccard_mean", "rp_vendi_frac", "rp_exact_dup_frac_action",
+             "rp_exact_dup_frac_rich", "rp_gzip_ratio", "rp_lz76_norm", "rp_entropy_rate"]
+    if n_all < 2:
+        d = {"rp_pair_jaccard_mean": 0.0, "rp_vendi_frac": 1.0,
+             "rp_exact_dup_frac_action": 0.0, "rp_exact_dup_frac_rich": 0.0,
+             "rp_gzip_ratio": 1.0, "rp_lz76_norm": 0.0, "rp_entropy_rate": 0.0}
+        return np.array([d[k] for k in order], dtype=float)
+
+    rich = [tuple(f"{s}|{a}|{b}" for s, a, b in zip(st, at, bk))
+            for st, at, bk in zip(street_sigs, action_sigs, bucket_sigs)]
+    d = {}
+    d["rp_exact_dup_frac_action"] = 1.0 - (len(set(action_sigs)) / n_all)
+    d["rp_exact_dup_frac_rich"] = 1.0 - (len(set(rich)) / n_all)
+
+    stride = max(1, n_all // _RP_MAX_HANDS)
+    idx = list(range(0, n_all, stride))[:_RP_MAX_HANDS]
+    bigrams = [_rp_ngram_set(rich[i], 2) for i in idx]
+    n = len(bigrams)
+    sims, row_sums = [], [0.0] * n
+    for i in range(n):
+        for j in range(i + 1, n):
+            s = _rp_jaccard(bigrams[i], bigrams[j])
+            sims.append(s)
+            row_sums[i] += s
+            row_sums[j] += s
+    d["rp_pair_jaccard_mean"] = (sum(sims) / len(sims)) if sims else 0.0
+    total_mass = sum(row_sums) + n
+    if total_mass > 0:
+        weights = [(rs + 1.0) / total_mass for rs in row_sums]
+        ent = -sum(w * math.log(w) for w in weights if w > 0)
+        d["rp_vendi_frac"] = float(np.clip(math.exp(ent) / n, 0.0, 1.0))
+    else:
+        d["rp_vendi_frac"] = 1.0
+
+    hand_strs = ["".join(t[:1] for t in sig) or "-" for sig in rich]
+    joined = ("#".join(hand_strs)).encode()
+    whole = len(_gzip.compress(joined, 5))
+    parts = sum(len(_gzip.compress(s.encode(), 5)) for s in hand_strs) or 1
+    d["rp_gzip_ratio"] = whole / parts
+
+    flat_actions = [a for sig in action_sigs for a in sig]
+    flat_str = "".join((a[:1] or "?") for a in flat_actions)
+    d["rp_lz76_norm"] = _rp_lz76_norm(flat_str[:300])
+    d["rp_entropy_rate"] = _rp_entropy_rate(flat_actions[:100 * 40])
+    return np.array([d[k] for k in order], dtype=float)
+
+
 FEATURE_NAMES = (
     [f"mean_{k}" for k in _HAND_KEYS]
     + [f"std_{k}" for k in _HAND_KEYS]
@@ -312,6 +444,7 @@ FEATURE_NAMES = (
     + [f"q75_{k}" for k in _HAND_KEYS]
     + _EXTRA_KEYS
     + _HFREE_KEYS
+    + _REDUND_KEYS
 )
 FEATURE_DIM = len(FEATURE_NAMES)
 
@@ -445,8 +578,9 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
     if not rows:
         # Hero unidentifiable in every hand — keep the hero-free signal, which
         # does not depend on matching the hero seat.
-        hero_part = np.zeros(FEATURE_DIM - len(_HFREE_KEYS), dtype=float)
-        return np.concatenate([hero_part, _group_hero_free_features(group)])
+        hero_part = np.zeros(FEATURE_DIM - len(_HFREE_KEYS) - len(_REDUND_KEYS), dtype=float)
+        return np.concatenate([hero_part, _group_hero_free_features(group),
+                               _redundancy_features(group)])
 
     # pool every aggressive-action size across the whole group before aggregating
     pooled_pr = [pr for r in rows for pr in r.pop("_pot_ratios")]
@@ -528,7 +662,8 @@ def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
         *_policy_features(pooled_decisions, pooled_seqs),
     ])
     return np.concatenate([means, stds, q25, q75, extras,
-                           _group_hero_free_features(group)])
+                           _group_hero_free_features(group),
+                           _redundancy_features(group)])
 
 
 def _policy_features(decisions, seqs):
@@ -775,7 +910,10 @@ class Poker44Model:
         # A group with no parseable hero hands yields an all-zero feature vector;
         # place it just below the decision boundary (uninformative, not a bot
         # call) so it neither triggers a false positive nor consumes the budget.
-        empty = ~features.any(axis=1)
+        # Detect uninformative (no parseable hands/hero) groups on the non-rp part
+        # only: rp_* features default to nonzero (vendi/gzip=1.0) for degenerate
+        # groups, so including them would mask a genuinely empty feature vector.
+        empty = ~features[:, :FEATURE_DIM - len(_REDUND_KEYS)].any(axis=1)
         scores[empty] = 0.1
         # Batch safety budget: cap the positive-call fraction to protect the
         # validator's safety/calibration gate without reordering (AP/recall

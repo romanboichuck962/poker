@@ -49,8 +49,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-hybrid",
-                "model_version": "11",
-                "framework": "In-batch rank-blend (weights 0.40/0.25/0.35) of a LightGBM, an ExtraTrees, and a PCA->MLP classifier over ~212 sanitization-robust behavioral, policy-determinism, bucket-snapped sizing, and hero-free action/hand-replay-signature features. Trained on validator-sanitized payloads (prepare_hand_for_miner) with size-resampling to live ~100-hand groups; FPR-anchored threshold from the human-score quantile plus a per-batch positive-call safety budget",
+                "model_version": "12",
+                "framework": "In-batch rank-blend (weights 0.35/0.20/0.30/0.15) of an ExtraTrees, a RandomForest, a HistGradientBoosting, and a LightGBM classifier (all regularized, depth<=9) over ~219 sanitization-robust behavioral, policy-determinism, bucket-snapped sizing, hero-free action/hand-replay-signature, and approximate cross-hand redundancy (gzip/LZ76/Vendi/Jaccard/entropy-rate) features. Trained on validator-sanitized payloads (prepare_hand_for_miner) with size-resampling to live ~100-hand groups; FPR-anchored threshold from the human-score quantile plus a per-batch positive-call safety budget",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "open_source": True,
@@ -69,7 +69,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "Rank-blend bot detector. Every training hand is passed through the public prepare_hand_for_miner sanitizer (seat re-alias, button=0, bb-bucketed amounts, 5-8 action window) so training matches the served feed, and groups are size-resampled to the live ~100-hand regime. Three diverse learners (LightGBM, ExtraTrees, PCA->MLP) are fused by in-batch rank so no member's calibration can distort the blend; scoring applies a monotone threshold remap plus a per-batch positive-call budget that secures the validator's safety/calibration gate without reordering (AP and recall@FPR are pure ranking). Behavioral + policy-determinism + bucket-snapped sizing + hero-free action/hand-replay-signature features only; no hole/board cards or identifiers.",
+                "notes": "Rank-blend bot detector. Every training hand is passed through the public prepare_hand_for_miner sanitizer (seat re-alias, button=0, bb-bucketed amounts, 5-8 action window) so training matches the served feed, and groups are size-resampled to the live ~100-hand regime. Four diverse, regularized tree learners (ExtraTrees, RandomForest, HistGradientBoosting, LightGBM; depth<=9) are fused by in-batch rank so no member's calibration can distort the blend; scoring applies a monotone threshold remap plus a per-batch positive-call budget (0.125) that secures the validator's safety/calibration gate without reordering (AP and recall@FPR are pure ranking). Features are behavioral + policy-determinism + bucket-snapped sizing + hero-free action/hand-replay signatures + approximate cross-hand redundancy (compression ratio, Lempel-Ziv complexity, Vendi diversity, pairwise Jaccard, entropy-rate); no hole/board cards or identifiers.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
