@@ -898,7 +898,12 @@ class Poker44Model:
         if self.rank_blend:
             agg = np.zeros(features.shape[0], dtype=float)
             for mem, w in zip(self.members, self.weights):
-                p = mem["est"].predict_proba(features[:, mem["cols"]])[:, 1]
+                estimator = mem["est"]
+                member_features = features[:, mem["cols"]]
+                if mem.get("prediction_kind") == "rank":
+                    p = estimator.predict(member_features)
+                else:
+                    p = estimator.predict_proba(member_features)[:, 1]
                 agg += w * _rank01(p)
             prob = agg / self.weights.sum()
         else:

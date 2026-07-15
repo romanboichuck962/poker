@@ -20,7 +20,7 @@ import numpy as np
 import joblib
 warnings.filterwarnings("ignore")
 sys.path.insert(0, "/root/poker"); sys.path.insert(0, "/root/Poker44-subnet")
-from lightgbm import LGBMClassifier
+from lightgbm import LGBMClassifier, LGBMRanker
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.decomposition import PCA
@@ -42,7 +42,7 @@ AMOUNT_SUBSTR = ("size_bb","pot_ratio","roundness","pot_hist","pot_modal","disti
 COLS = [i for i, n in enumerate(FEATURE_NAMES) if not any(s in n for s in AMOUNT_SUBSTR)]
 RNG = np.random.default_rng(1201)
 TARGET_FPR = 0.05
-WEIGHTS = np.array([0.40, 0.25, 0.35])   # lgbm, extratrees, pca-mlp
+WEIGHTS = np.array([0.30, 0.20, 0.25, 0.25])  # LGBM clf, ExtraTrees, PCA-MLP, LambdaMART
 
 
 def load_sanitized():
@@ -97,20 +97,44 @@ def make_members():
                         PCA(n_components=50, random_state=42),
                         MLPClassifier((64,), alpha=2.0, max_iter=700, early_stopping=True,
                                       validation_fraction=0.15, n_iter_no_change=15, random_state=42))
-    return [lgbm, et, mlp]
+    ranker = LGBMRanker(
+        objective="lambdarank", metric="map", eval_at=[5],
+        n_estimators=500, num_leaves=31, min_child_samples=30,
+        learning_rate=0.03, subsample=0.8, subsample_freq=1,
+        colsample_bytree=0.7, reg_lambda=3.0, n_jobs=4,
+        random_state=43, verbosity=-1,
+    )
+    return [("proba", lgbm), ("proba", et), ("proba", mlp), ("rank", ranker)]
 
 
-def fit_members(X, y):
-    ms = make_members()
-    for m in ms:
-        m.fit(X[:, COLS], y)
-    return ms
+def _group_sizes(dates):
+    """Return contiguous source-date group lengths for LambdaMART training."""
+    values = np.asarray(dates)
+    if not len(values):
+        return []
+    return [int(np.sum(values == date)) for date in dict.fromkeys(values)]
+
+
+def fit_members(X, y, dates):
+    members = []
+    for prediction_kind, estimator in make_members():
+        if prediction_kind == "rank":
+            estimator.fit(X[:, COLS], y, group=_group_sizes(dates))
+        else:
+            estimator.fit(X[:, COLS], y)
+        members.append({"est": estimator, "prediction_kind": prediction_kind})
+    return members
 
 
 def blend_prob(members, X):
     agg = np.zeros(X.shape[0])
-    for m, w in zip(members, WEIGHTS):
-        agg += w * _rank01(m.predict_proba(X[:, COLS])[:, 1])
+    for member, w in zip(members, WEIGHTS):
+        estimator = member["est"]
+        if member["prediction_kind"] == "rank":
+            scores = estimator.predict(X[:, COLS])
+        else:
+            scores = estimator.predict_proba(X[:, COLS])[:, 1]
+        agg += w * _rank01(scores)
     return agg / WEIGHTS.sum()
 
 
@@ -123,8 +147,8 @@ def walk_forward(by):
     rows = []
     for R in rels[-4:]:
         past = [r for r in rels if r < R]
-        Xtr, ytr, _ = training_set(by, past, per=4)
-        ms = fit_members(Xtr, ytr)
+        Xtr, ytr, dtr = training_set(by, past, per=4)
+        ms = fit_members(Xtr, ytr, dtr)
         ptr = blend_prob(ms, Xtr)
         thr = float(np.quantile(ptr[ytr == 0], 1 - TARGET_FPR))
         te = sized(by[R], [100], 40, RNG)
@@ -150,20 +174,25 @@ def main():
     print(f"deployment training set: {len(y)} groups ({int(y.sum())} bot) incl. size-resamples")
     oof = np.zeros(len(y))
     for tr, te in GroupKFold(5).split(X, y, groups=dates):
-        ms = fit_members(X[tr], y[tr])
+        ms = fit_members(X[tr], y[tr], dates[tr])
         # rank-blend within the held-out fold (mirrors per-batch serving)
         agg = np.zeros(len(te))
-        for m, w in zip(ms, WEIGHTS):
-            agg += w * _rank01(m.predict_proba(X[te][:, COLS])[:, 1])
+        for member, w in zip(ms, WEIGHTS):
+            estimator = member["est"]
+            if member["prediction_kind"] == "rank":
+                scores = estimator.predict(X[te][:, COLS])
+            else:
+                scores = estimator.predict_proba(X[te][:, COLS])[:, 1]
+            agg += w * _rank01(scores)
         oof[te] = agg / WEIGHTS.sum()
     thr = float(np.quantile(oof[y == 0], 1 - TARGET_FPR))
     print(f"OOF rank-blend AUC={roc_auc_score(y, oof):.4f}  FPR-anchored threshold={thr:.4f}")
 
-    members = fit_members(X, y)
+    members = fit_members(X, y, dates)
     artifact = {"kind": "rank_blend",
-                "members": [{"est": m, "cols": COLS} for m in members],
+                "members": [{**member, "cols": COLS} for member in members],
                 "weights": WEIGHTS.tolist(), "threshold": thr,
-                "selected": "v11 rank-blend [LGBM,ExtraTrees,PCA-MLP] on sanitized+hero-free features"}
+                "selected": "v12 rank-blend [LGBM,ExtraTrees,PCA-MLP,LambdaMART] on sanitized+hero-free features"}
     joblib.dump(artifact, OUT, compress=3)
     print(f"saved {OUT} ({OUT.stat().st_size/1e6:.1f} MB)")
 

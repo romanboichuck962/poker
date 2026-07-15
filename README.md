@@ -5,10 +5,9 @@ Open-source miner model for the Poker44 subnet (Bittensor netuid 126).
 ## Model
 
 - **Name:** poker44-neptune-hybrid
-- **Version:** 7
-- **Framework:** hybrid — Optuna-tuned GBDT stacking
-  (LightGBM + CatBoost + XGBoost + ExtraTrees, logistic meta) **blended 50/50
-  with a 3-seed augmented PyTorch attention-MIL neural ensemble**
+- **Version:** 14
+- **Framework:** rank-blended ensemble: LightGBM, ExtraTrees, PCA-MLP, and a
+  LightGBM LambdaMART member
 - **License:** MIT
 - **Inference mode:** remote
 
@@ -18,7 +17,7 @@ probability in `[0, 1]` per chunk.
 
 ## Architecture
 
-1. **Feature extraction** ([`model.py`](model.py)): **207 hero-centric features**
+1. **Feature extraction** ([`model.py`](model.py)): **269 behavioral features**
    per chunk group.
    - Per-hand behavior: action rates (VPIP, PFR, gap, fold/call/check/raise/bet),
      aggression, per-street aggression (preflop→river), fold-to-bet response,
@@ -34,63 +33,45 @@ probability in `[0, 1]` per chunk.
      context (street, facing-aggression, pot bucket), per-context repeat rate,
      pure-policy fraction, and action-bigram entropy — a bot applies a
      near-fixed context→action policy (low entropy), a human mixes.
-2. **Classifier — hybrid of two complementary views**:
-   - a sigmoid-calibrated **GBDT stacking ensemble** (Optuna-tuned LightGBM +
-     CatBoost + XGBoost + ExtraTrees, logistic meta) over the 207 group features;
-   - a **PyTorch attention-MIL set model** that encodes each hand's per-hand
-     feature vector with an MLP and pools hands with masked attention (learned
-     aggregation over the *set* of hands, instead of fixed moments). Trained
-     with **hand-dropout augmentation** (each step sees a random subset of the
-     hero's hands — a subset keeps the label) and **3-seed ensembling** to cut
-     variance on the small dataset.
-   The two are blended 50/50 (GBDT/neural). The neural model is weaker alone but
-   low-correlated with the GBDT stack, so the blend adds real signal.
-3. **Score recentering**: a monotone map places the 5%-FPR operating point at
-   0.5 so hard predictions respect the validator's false-positive budget.
+2. **Classifier — rank-blended complementary views**:
+   - LightGBM, ExtraTrees, and PCA-MLP classifiers over 269 group features;
+   - a LightGBM **LambdaMART** ranker trained with source-release groups,
+     optimizing within-release bot ordering.
+   Each member contributes its per-request rank, avoiding dependence on any
+   individual model's probability calibration.
+3. **Serving calibration**: a monotone map places the 5%-FPR operating point at
+   0.5, then a rank-preserving positive-call budget protects the validator's
+   threshold-safety requirement.
 
 ## Selection & Training
 
 Trained **exclusively on the public Poker44 training benchmark**
-(`https://api.poker44.net/api/v1/benchmark`, all 45 published releases, 1,186
-chunk groups). Pipeline:
+(`https://api.poker44.net/api/v1/benchmark`, 51 releases through 2026-07-15).
+Every hand is passed through `prepare_hand_for_miner` before feature extraction,
+and chunks are size-resampled to the live ~100-hand regime. Pipeline:
 
-- [`train.py`](train.py) — 12-algorithm baseline comparison.
-- [`tune_v4.py`](tune_v4.py) — Optuna tuning (50 trials each) of LightGBM,
-  CatBoost, XGBoost, then candidate comparison by cross-validated per-window
-  validator reward.
-- [`deploy_v4.py`](deploy_v4.py) — builds the tuned stacking ensemble and
-  deploys the compact calibrated artifact.
+- [`deploy_v11.py`](deploy_v11.py) — trains the sanitized rank blend, evaluates
+  date-walk-forward performance, and writes the deployment artifact.
 
-Out-of-fold generalization (date-grouped 5-fold CV over all 1,186 groups),
-GBDT stack vs the hybrid blend:
+Current deployment evaluation uses sanitized, size-resampled 100-hand groups:
 
-| metric | GBDT stack | **hybrid (deployed)** |
-|---|---|---|
-| OOF ROC AUC | 0.793 | **0.822** |
-| OOF average precision | 0.820 | **0.839** |
-| CV per-window reward | 0.790 | **0.831** |
+| metric | value |
+|---|---|
+| OOF ROC AUC | 0.8795 |
+| Mean walk-forward validator reward (2026-07-12 to 2026-07-15) | 0.9407 |
+| Latest walk-forward reward (2026-07-15) | 0.9613 |
+| Latest walk-forward AP | 0.9751 |
+| Latest recall at 5% FPR | 0.9000 |
 
-The augmented neural ensemble scores OOF AUC 0.766 alone (up from 0.727 without
-augmentation) and is low-correlated with the GBDT stack, so the 50/50 blend
-lifts OOF AUC from 0.793 to 0.822.
-
-Held-out newest release (2026-07-09, trained on all prior releases): reward
-0.885, AUC 0.917, AP 0.895, recall@5%FPR 0.740 — strong, but a single-release
-number; the cross-validated 0.822 AUC above is the honest generalization figure.
-
-The deployed artifact is the tuned stacking ensemble refit on all data.
+These are public-benchmark proxy metrics, not live leaderboard results.
 
 ## Files
 
 - [`miner.py`](miner.py) — serving miner (implementation file in the manifest)
 - [`model.py`](model.py) — features + serving wrapper (implementation file in the manifest)
-- [`train.py`](train.py) — baseline comparison
-- [`tune_v4.py`](tune_v4.py) — Optuna tuning + per-window-reward selection
-- [`deploy_v4.py`](deploy_v4.py) — build + deploy tuned stack
-- [`robust_select.py`](robust_select.py) — per-window-reward evaluation helpers
+- [`deploy_v11.py`](deploy_v11.py) — train and evaluate the deployed rank blend
 - `artifacts/poker44_model.joblib` — deployed model (sha256 published as
   `artifact_sha256` in the manifest)
-- `artifacts/tuned_params.txt` — the Optuna-selected hyperparameters
 
 ## Reproduce
 
@@ -98,8 +79,7 @@ The deployed artifact is the tuned stacking ensemble refit on all data.
 pip install -r requirements.txt
 pip install -e /path/to/Poker44-subnet
 python /path/to/Poker44-subnet/scripts/download_benchmark.py --out data/benchmark
-python tune_v4.py      # tune + compare
-python deploy_v4.py    # build + deploy tuned stack
+python deploy_v11.py   # build the sanitized LambdaMART rank blend
 ```
 
 ## Training Data Statement
