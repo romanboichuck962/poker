@@ -1,54 +1,30 @@
 {
-  "cv_ap": 0.9435186032306634,
-  "cv_bot_recall": 0.76875,
-  "cv_fpr": 0.006109022556390977,
-  "cv_reward": 0.9108565111307322,
+  "cv_ap": 0.9439948515622254,
+  "cv_bot_recall": 0.7278911564625851,
+  "cv_fpr": 0.0,
+  "cv_reward": 0.8983826058960701,
   "cv_safety": 1.0,
-  "hard_bot_recall": 0.3,
+  "hard_bot_recall": 0.3197278911564626,
   "n_dates": 52,
-  "positive_rate": 0.15,
-  "selected": "best-of-3 v17: LGBMClassifier(0.45)+LambdaMART(0.40)+ExtraTrees(0.15); sanitized robust cols; targetFPR=5%; remap+smart-minpos+16%cap; UID138 promote gates (FPR<=6%, no reward regression / FPR tradeoff)",
-  "trained_at": "2026-07-16T06:23:01.601732+00:00",
+  "positive_rate": 0.1598639455782313,
+  "selected": "rocket-p44r1: sklearn-stack+monotone-xgb+pca-mlp+drse/weighted-logit-fusion; weighted-logit fusion(stack 0.28 + mono 0.18 + mlp 0.32 + drse 0.22) of stack/mono on PH + mlp on UN + drse on V2; walk-forward weights; targetFPR=5%; remap+smart-minpos+16%cap; adapted from UID163 rocket-r2",
+  "trained_at": "2026-07-16T15:37:46.790548+00:00",
   "walk_forward": [
     {
-      "ap": 0.9465604985492616,
-      "date": "2026-07-13",
-      "hard_bot_recall": 0.3,
-      "hard_fpr": 0.0,
-      "pos_rate": 0.15,
-      "recall": 0.85,
-      "reward": 0.9362961744922415,
-      "safety": 1.0
-    },
-    {
-      "ap": 0.8988704708371458,
-      "date": "2026-07-14",
-      "hard_bot_recall": 0.3,
-      "hard_fpr": 0.0,
-      "pos_rate": 0.15,
-      "recall": 0.5,
-      "reward": 0.8146046647930011,
-      "safety": 1.0
-    },
-    {
-      "ap": 0.9752417717750231,
-      "date": "2026-07-15",
-      "hard_bot_recall": 0.3,
-      "hard_fpr": 0.0,
-      "pos_rate": 0.15,
-      "recall": 0.875,
-      "reward": 0.9538346201212581,
-      "safety": 1.0
-    },
-    {
-      "ap": 0.9534016717612231,
-      "date": "2026-07-16",
-      "hard_bot_recall": 0.3,
-      "hard_fpr": 0.0,
-      "pos_rate": 0.15,
-      "recall": 0.85,
-      "reward": 0.9386905851164281,
-      "safety": 1.0
+      "cv_reward_prior": 0.8873910047692747,
+      "n_walkforward": 588,
+      "weights": {
+        "drse": 0.22,
+        "mlp": 0.32,
+        "mono": 0.18,
+        "stack": 0.28
+      },
+      "weights_prior": {
+        "drse": 0.2,
+        "mlp": 0.28,
+        "mono": 0.22,
+        "stack": 0.3
+      }
     }
   ]
 }

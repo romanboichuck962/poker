@@ -73,9 +73,9 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker44-neptune-hybrid",
-                "model_version": "18",
-                "framework": "Best-of-3: LGBMClassifier(0.45)+LambdaMART(0.40)+ExtraTrees(0.15) rank-blend; sanitized robust features; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap; UID138 promote gates (FPR<=6%, reward non-regression with FPR-improve tradeoff)",
+                "model_name": "poker44-neptune-rocket",
+                "model_version": "19",
+                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on hero-free+redundancy features; walk-forward-selected blend weights; sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -87,8 +87,8 @@ class Miner(BaseMinerNeuron):
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
                     "2026-07-16 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
-                    "training matches serving. See deploy_lgbm_best.py / autopilot.py "
-                    "for training and UID138-style promote gates."
+                    "training matches serving. See deploy_rocket.py for training "
+                    "(architecture adapted from UID163's rocket-r2) and promote gates."
                 ),
                 "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "Best-of-3 (UID89 ranking + UID138 guards + hybrid LGBM). LambdaMART-led blend with classifier + light ExtraTrees. Sanitized train; drift filter; remap+smart-minpos+16%cap; promote only if FPR<6% and reward does not regress (or mild drop with clearer FPR gain).",
+                "notes": "v19: switched to UID163 (rocket-r2)'s four-component architecture (stack+mono+mlp+drse, weighted-logit fusion) adapted to our own PH/hero-free feature views; walk-forward-selected blend weights (stack 0.28, mono 0.18, mlp 0.32, drse 0.22); sanitized train; remap+smart-minpos+16%cap; force-deployed by explicit request despite a small offline reward tradeoff vs the prior best-of-3 rank-blend (0.898 vs 0.911 walk-forward).",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

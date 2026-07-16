@@ -7,3 +7,4 @@ promote_history.jsonl
 autopilot.log
 *.out
 captures/
+catboost_info/

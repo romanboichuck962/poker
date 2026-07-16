@@ -863,10 +863,14 @@ def _apply_batch_safety_budget(scores: np.ndarray, max_frac: float) -> np.ndarra
 class Poker44Model:
     """Serving wrapper.
 
-    Supports two artifact formats:
+    Supports several artifact formats:
       - {"pipeline", "threshold"}                       -> tabular GBDT only
       - {"pipeline", "neural_state", "feat_mean",        -> hybrid GBDT + attn-MIL
          "feat_std", "blend_w", "threshold"}                blended by fixed weight
+      - {"kind": "rank_blend", "members", "weights"}     -> in-batch-rank fusion
+      - {"kind": "rocket_logit", "ensemble"}             -> weighted log-odds
+         fusion of stack/mono/mlp/drse over the PH/V2/UN feature views
+         (adapted from UID163's rocket-r2 architecture; see rocket_ensemble.py)
     """
 
     def __init__(self, artifact_path: Path | str = MODEL_ARTIFACT):
@@ -875,8 +879,16 @@ class Poker44Model:
         artifact = joblib.load(artifact_path)
         self.neural = None
         self.rank_blend = False
+        self.rocket = False
         if isinstance(artifact, dict):
             self.threshold = float(artifact.get("threshold", 0.5))
+            if artifact.get("kind") == "rocket_logit":
+                # RocketEnsemble: four components fused by weighted log-odds
+                # over the PH ("phasberg") / V2 ("hero-free") feature views.
+                self.rocket = True
+                self.ensemble = artifact["ensemble"]
+                self.pipeline = None
+                return
             if artifact.get("kind") == "rank_blend":
                 # list of {"est": fitted_classifier, "cols": column indices} plus
                 # per-member weights; members are fused by in-batch rank.
@@ -927,7 +939,11 @@ class Poker44Model:
         if not groups:
             return []
         features = np.vstack([extract_group_features(g) for g in groups])
-        if self.rank_blend:
+        if self.rocket:
+            ph = features[:, self.ensemble.cols_ph]
+            v2 = features[:, self.ensemble.cols_v2]
+            prob = self.ensemble.score(ph, v2)
+        elif self.rank_blend:
             agg = np.zeros(features.shape[0], dtype=float)
             for mem, w in zip(self.members, self.weights):
                 estimator = mem["est"]
