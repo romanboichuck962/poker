@@ -9,6 +9,8 @@ Run with the Poker44-subnet package installed (pip install -e Poker44-subnet).
 # which requires the real DetectionSynapse class, not a stringized annotation.
 
 import hashlib
+import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Tuple
@@ -37,6 +39,28 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _git(args: list[str], repo_root: Path) -> str:
+    """Run a git command in repo_root, returning stripped stdout or "" on failure."""
+    try:
+        out = subprocess.run(
+            ["git", *args],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:  # pragma: no cover - git missing / not a repo
+        return ""
+    if out.returncode != 0:
+        return ""
+    return out.stdout.strip()
+
+
+def _git_commit(repo_root: Path) -> str:
+    """Current HEAD commit hash (manifest policy requires a real git commit)."""
+    return _git(["rev-parse", "HEAD"], repo_root)
+
+
 class Miner(BaseMinerNeuron):
     """Miner returning one calibrated bot-risk probability per chunk."""
 
@@ -54,6 +78,7 @@ class Miner(BaseMinerNeuron):
                 "framework": "Best-of-3: LGBMClassifier(0.45)+LambdaMART(0.40)+ExtraTrees(0.15) rank-blend; sanitized robust features; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap; UID138 promote gates (FPR<=6%, reward non-regression with FPR-improve tradeoff)",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
+                "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
                 "open_source": True,
                 "inference_mode": "remote",
                 "artifact_sha256": _sha256(MODEL_ARTIFACT),
