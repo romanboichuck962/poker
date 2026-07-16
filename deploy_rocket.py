@@ -112,14 +112,37 @@ _EXCLUDE_EXACT = {
     "n_decisions", "mean_n_players", "std_n_players", "q25_n_players",
     "q75_n_players", "hf_mean_n_actions", "hf_std_n_actions",
 }
+# v20: measured live-OOD ablation (uid57's technique, on OUR captures). The
+# 200 captured validator chunks vs size-matched sanitized benchmark groups give
+# a per-column z = |mean_live - mean_bench| / std_bench (artifacts/live_z.npy).
+# Columns with z > Z_MAX are structurally out-of-distribution at serve time
+# (live stacks pinned at 100bb vs bench ~232; live pots ~5bb vs bench ~100;
+# 7-9 seats vs 6; passivity shares the benchmark barely contains) — trees that
+# split on them collapse live, so both views drop them.
+Z_MAX = float(os.environ.get("POKER44_Z_MAX", "5.0"))
+_Z_PATH = Path("/root/poker/artifacts")
+_z = np.load(_Z_PATH / "live_z.npy") if (_Z_PATH / "live_z.npy").exists() else None
+if _z is not None and len(_z) != len(FEATURE_NAMES):
+    raise SystemExit(f"live_z.npy has {len(_z)} cols but FEATURE_NAMES has "
+                     f"{len(FEATURE_NAMES)} — regenerate the z-vector first")
+
+
+def _live_ok(i: int) -> bool:
+    return _z is None or float(_z[i]) <= Z_MAX
+
+
 COLS_PH = [
     i for i, name in enumerate(FEATURE_NAMES)
     if not name.startswith("hf_") and not name.startswith("rp_")
     and name not in _EXCLUDE_EXACT and not any(s in name for s in _EXCLUDE_SUBSTR)
+    and _live_ok(i)
 ]
 # V2 ("hero-free"-equivalent): order-invariant hf_* aggregates + rp_* cross-hand
 # redundancy signatures — sanitization-invariant, genuinely decorrelated from PH.
-COLS_V2 = [i for i, name in enumerate(FEATURE_NAMES) if name.startswith("hf_") or name.startswith("rp_")]
+COLS_V2 = [
+    i for i, name in enumerate(FEATURE_NAMES)
+    if (name.startswith("hf_") or name.startswith("rp_")) and _live_ok(i)
+]
 
 RNG = np.random.default_rng(20260716)
 

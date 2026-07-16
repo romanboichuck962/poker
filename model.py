@@ -295,15 +295,23 @@ _HF_PERHAND = [
     "actor_switch", "action_run", "actor_run", "pot_delta_mean", "pot_growth",
     "pot_monotonic", "hero_share", "n_distinct_actors", "n_streets", "n_actions",
     "bucket_amt_mean", "nonzero_amt_share",
+    # v20: action-mix / street-mix / sizing-concentration scalars (all shares or
+    # entropies over ALL actors — sanitization-invariant), mirroring the richer
+    # hero-free view the top "rocket" miners feed their mlp/drse members.
+    "call_share", "check_share", "fold_share", "bet_share", "raise_share",
+    "aggr_share", "preflop_share", "postflop_share",
+    "bucket_entropy", "bucket_amt_std", "pot_before_bb", "pot_after_bb",
 ]
+# v20: aggregate each per-hand scalar with 7 order-stats (was mean+std only) so
+# the hero-free view carries distribution shape, not just location/scale.
+_HF_STATS = ("mean", "std", "min", "max", "q10", "q50", "q90")
 _HF_GROUP = [
     "stack_mean_bb", "stack_std_bb", "stack_iqr_bb", "raise_to_share", "call_to_share",
     "action_sig_top", "action_sig_uniq", "role_sig_top", "role_sig_uniq",
     "street_sig_top", "street_sig_uniq", "bucket_sig_top", "bucket_sig_uniq",
     "high_aggr_rate", "low_entropy_rate", "zero_hero_rate", "hand_count", "hand_count_log",
 ]
-_HFREE_KEYS = ([f"hf_mean_{k}" for k in _HF_PERHAND]
-               + [f"hf_std_{k}" for k in _HF_PERHAND]
+_HFREE_KEYS = ([f"hf_{stat}_{k}" for stat in _HF_STATS for k in _HF_PERHAND]
                + [f"hf_{k}" for k in _HF_GROUP])
 
 # --- approximate cross-hand redundancy (rp_*) --------------------------------
@@ -525,14 +533,23 @@ def _group_hero_free_features(group: List[Dict[str, Any]]) -> np.ndarray:
         if nz.size:
             snapped = _EXACT_BB_BUCKETS[np.argmin(np.abs(_EXACT_BB_BUCKETS[None, :] - nz[:, None]), axis=1)]
             bucket_amt_mean = float(snapped.mean())
+            bucket_amt_std = float(snapped.std())
+            _, _bcnts = np.unique(snapped, return_counts=True)
+            bucket_entropy = _entropy_counts(_bcnts.tolist())
             bkey = tuple(int(np.argmin(np.abs(_EXACT_BB_BUCKETS - v))) for v in amts)
         else:
-            bucket_amt_mean = 0.0
+            bucket_amt_mean = bucket_amt_std = bucket_entropy = 0.0
             bkey = tuple([0] * na)
         nonzero_share = float(nz.size / na) if na else 0.0
 
         raise_present += sum(1 for a in actions if a.get("raise_to") is not None)
         call_present += sum(1 for a in actions if a.get("call_to") is not None)
+
+        # action-mix shares over the "meaningful" decision actions
+        cnt = Counter(a_types)
+        meaningful = sum(cnt.get(k, 0) for k in ("call", "check", "fold", "bet", "raise"))
+        m = max(1, meaningful)
+        n_pre = sum(1 for s in streets if s == "preflop")
 
         perhand.append([
             a_ent, _entropy_counts(Counter(actors).values()),
@@ -542,6 +559,12 @@ def _group_hero_free_features(group: List[Dict[str, Any]]) -> np.ndarray:
             pot_delta_mean, pot_growth, pot_mono,
             (hero_n / na if na else 0.0), float(len(set(actors))),
             float(len(set(streets))), float(na), bucket_amt_mean, nonzero_share,
+            cnt.get("call", 0) / m, cnt.get("check", 0) / m, cnt.get("fold", 0) / m,
+            cnt.get("bet", 0) / m, cnt.get("raise", 0) / m,
+            (cnt.get("bet", 0) + cnt.get("raise", 0)) / m,
+            (n_pre / na if na else 0.0), ((na - n_pre) / na if na else 0.0),
+            bucket_entropy, bucket_amt_std,
+            (float(np.mean(pb)) if pb else 0.0), (float(np.mean(pa)) if pa else 0.0),
         ])
         act_sigs.append(tuple(a_types))
         role_sigs.append(tuple("H" if s == hero else "o" for s in actors))
@@ -549,8 +572,11 @@ def _group_hero_free_features(group: List[Dict[str, Any]]) -> np.ndarray:
         bucket_sigs.append(bkey)
 
     P = np.array(perhand, dtype=float)
-    means = P.mean(axis=0)
-    stds = P.std(axis=0)
+    stats = np.concatenate([
+        P.mean(axis=0), P.std(axis=0), P.min(axis=0), P.max(axis=0),
+        np.quantile(P, 0.10, axis=0), np.quantile(P, 0.50, axis=0),
+        np.quantile(P, 0.90, axis=0),
+    ])
 
     def sig(sigs):
         c = Counter(sigs)
@@ -569,7 +595,7 @@ def _group_hero_free_features(group: List[Dict[str, Any]]) -> np.ndarray:
         a_top, a_uniq, r_top, r_uniq, s_top, s_uniq, b_top, b_uniq,
         high_aggr / n, low_ent / n, zero_hero / n, float(n), math.log1p(n),
     ]
-    return np.concatenate([means, stds, np.array(grp, dtype=float)])
+    return np.concatenate([stats, np.array(grp, dtype=float)])
 
 
 def extract_group_features(group: List[Dict[str, Any]]) -> np.ndarray:
