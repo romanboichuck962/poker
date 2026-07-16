@@ -50,8 +50,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-hybrid",
-                "model_version": "14",
-                "framework": "In-batch rank-blend (weights 0.30/0.20/0.25/0.25) of LightGBM, ExtraTrees, PCA-MLP, and a LightGBM LambdaMART ranker over 269 sanitization-robust behavioral, policy-determinism, bucket-snapped sizing, hero-free action/hand-replay-signature, and approximate cross-hand redundancy (gzip/LZ76/Vendi/Jaccard/entropy-rate) features. Trained on validator-sanitized payloads (prepare_hand_for_miner) with size-resampling to live ~100-hand groups; FPR-anchored threshold from the human-score quantile plus a per-batch positive-call safety budget",
+                "model_version": "18",
+                "framework": "Best-of-3: LGBMClassifier(0.45)+LambdaMART(0.40)+ExtraTrees(0.15) rank-blend; sanitized robust features; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap; UID138 promote gates (FPR<=6%, reward non-regression with FPR-improve tradeoff)",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "open_source": True,
@@ -60,9 +60,10 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-15 (including v1.13), "
+                    "2026-07-16 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
-                    "training matches serving. See deploy_v11.py for the full training procedure."
+                    "training matches serving. See deploy_lgbm_best.py / autopilot.py "
+                    "for training and UID138-style promote gates."
                 ),
                 "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
@@ -71,7 +72,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "Rank-blend bot detector. Every training hand is passed through the public prepare_hand_for_miner sanitizer (seat re-alias, button=0, bb-bucketed amounts, 5-8 action window) so training matches the served feed, and groups are size-resampled to the live ~100-hand regime. Three classifiers (LightGBM, ExtraTrees, PCA-MLP) and a LightGBM LambdaMART ranker are fused by in-batch rank so no member's calibration can distort the blend; scoring applies a monotone threshold remap plus a per-batch positive-call budget that secures the validator's safety/calibration gate without reordering (AP and recall@FPR are pure ranking). Features are behavioral + policy-determinism + bucket-snapped sizing + hero-free action/hand-replay signatures + approximate cross-hand redundancy (compression ratio, Lempel-Ziv complexity, Vendi diversity, pairwise Jaccard, entropy-rate); no hole/board cards or identifiers.",
+                "notes": "Best-of-3 (UID89 ranking + UID138 guards + hybrid LGBM). LambdaMART-led blend with classifier + light ExtraTrees. Sanitized train; drift filter; remap+smart-minpos+16%cap; promote only if FPR<6% and reward does not regress (or mild drop with clearer FPR gain).",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

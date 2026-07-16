@@ -795,6 +795,11 @@ def _build_attn_mil(fdim: int):
 # vs the benchmark's ~35, so a fixed recenter threshold drifts; the budget makes
 # the operating point robust regardless.
 _MAX_POS_FRAC = float(os.environ.get("POKER44_MAX_POS_FRAC", "0.16"))
+# Smart last-resort: lift top ranks above 0.5 only when the batch is
+# discriminative but remapping collapsed everything below 0.5. Flat/noisy
+# batches are left alone so we do not invent weak bot calls.
+_MIN_POS_COUNT = int(os.environ.get("POKER44_MIN_POS_COUNT", "1"))
+_MIN_POS_SPREAD = float(os.environ.get("POKER44_MIN_POS_SPREAD", "0.05"))
 
 
 def _rank01(scores: np.ndarray) -> np.ndarray:
@@ -804,6 +809,33 @@ def _rank01(scores: np.ndarray) -> np.ndarray:
     if n <= 1:
         return np.zeros(n, dtype=float)
     return np.argsort(np.argsort(s, kind="stable"), kind="stable") / (n - 1.0)
+
+
+def _ensure_min_positives(
+    scores: np.ndarray,
+    min_count: int = _MIN_POS_COUNT,
+    min_spread: float = _MIN_POS_SPREAD,
+) -> np.ndarray:
+    """Lift top ranks above 0.5 only when ranking signal exists but all < 0.5.
+
+    Preserves order. Skips flat batches (spread < min_spread) to avoid the
+    disadvantage of inventing hard positives on noise.
+    """
+    s = np.asarray(scores, dtype=float).copy()
+    n = s.size
+    if n == 0 or min_count <= 0:
+        return s
+    k = max(0, min(int(min_count), n))
+    if k == 0 or np.count_nonzero(s >= 0.5) >= k:
+        return s
+    spread = float(s.max() - s.min()) if n else 0.0
+    if spread < float(min_spread):
+        return s
+    order = np.argsort(-s, kind="stable")
+    for rank, idx in enumerate(order[:k]):
+        if s[idx] < 0.5:
+            s[idx] = 0.5 + 0.01 * (k - rank) / max(k, 1)
+    return np.clip(s, 0.0, 1.0)
 
 
 def _apply_batch_safety_budget(scores: np.ndarray, max_frac: float) -> np.ndarray:
@@ -920,8 +952,8 @@ class Poker44Model:
         # groups, so including them would mask a genuinely empty feature vector.
         empty = ~features[:, :FEATURE_DIM - len(_REDUND_KEYS)].any(axis=1)
         scores[empty] = 0.1
-        # Batch safety budget: cap the positive-call fraction to protect the
-        # validator's safety/calibration gate without reordering (AP/recall
-        # unaffected). Robust to the benchmark->live group-size shift.
+        # Guard against "all scores < 0.5" collapse (live reward=0.0), then cap
+        # the positive-call fraction under the validator's FPR cliff.
+        scores = _ensure_min_positives(scores, _MIN_POS_COUNT)
         scores = _apply_batch_safety_budget(scores, _MAX_POS_FRAC)
         return scores.astype(float).tolist()
