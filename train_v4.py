@@ -88,6 +88,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-depth", type=int, default=9)
     parser.add_argument("--learning-rate", type=float, default=0.03)
     parser.add_argument("--no-final-fit", action="store_true")
+    parser.add_argument(
+        "--live-z",
+        default="",
+        help="path to a per-feature |z| array (live captures vs benchmark); "
+        "columns with z > --z-max are zeroed in training AND serving so no "
+        "branch can rank live chunks on structurally out-of-distribution "
+        "magnitudes (live stacks pinned 100bb, pots ~20x smaller, 7-9 seats)",
+    )
+    parser.add_argument("--z-max", type=float, default=5.0)
+    parser.add_argument(
+        "--window-bot-frac",
+        type=float,
+        default=0.5,
+        help="bot fraction of selection/eval request windows; ~0.2 mimics the "
+        "live snapshot composition instead of the balanced benchmark",
+    )
     return parser.parse_args()
 
 
@@ -184,11 +200,17 @@ def _candidate_weights(step: float) -> list[np.ndarray]:
     return list(unique.values())
 
 
-def _balanced_windows(labels: np.ndarray, count: int, repeats: int, seed: int) -> list[np.ndarray]:
+def _balanced_windows(
+    labels: np.ndarray,
+    count: int,
+    repeats: int,
+    seed: int,
+    bot_frac: float = 0.5,
+) -> list[np.ndarray]:
     rng = np.random.default_rng(seed)
     positive = np.flatnonzero(labels == 1)
     negative = np.flatnonzero(labels == 0)
-    left = count // 2
+    left = max(1, int(round(count * bot_frac)))
     windows = []
     for _ in range(max(1, repeats)):
         pos = rng.choice(positive, left, replace=len(positive) < left)
@@ -266,6 +288,7 @@ def _select_configuration(
     finalists: int,
     windows_per_date: int,
     seed: int,
+    bot_frac: float = 0.5,
 ) -> dict[str, Any]:
     weights = _candidate_weights(weight_step)
     print(f"candidate weight vectors: {len(weights)}")
@@ -298,7 +321,7 @@ def _select_configuration(
     request_windows: list[dict[str, Any]] = []
     for fold_index, fold in enumerate(folds):
         windows = _balanced_windows(
-            fold["labels"], 40, windows_per_date, seed + 1000 * fold_index
+            fold["labels"], 40, windows_per_date, seed + 1000 * fold_index, bot_frac
         )
         for indices, branches in zip(windows, _batched_request_branches(fold, windows)):
             request_windows.append(
@@ -343,6 +366,7 @@ def _evaluate_predictions(
     window_size: int,
     windows_per_date: int,
     seed: int,
+    bot_frac: float = 0.5,
 ) -> dict[str, Any]:
     per_date = []
     window_rewards: list[float] = []
@@ -358,7 +382,7 @@ def _evaluate_predictions(
         all_labels.append(fold["labels"])
         all_scores.append(mapped)
         windows = _balanced_windows(
-            fold["labels"], window_size, windows_per_date, seed + 1000 * fold_index
+            fold["labels"], window_size, windows_per_date, seed + 1000 * fold_index, bot_frac
         )
         for indices, branches in zip(windows, _batched_request_branches(fold, windows)):
             labels = fold["labels"][indices]
@@ -465,6 +489,20 @@ def main() -> None:
     x = _feature_matrix(chunks, y, dates, cache_path=Path(args.feature_cache))
     print(f"V4 feature matrix: {x.shape}", flush=True)
 
+    ablation_mask = np.zeros(len(FEATURE_NAMES), dtype=bool)
+    if args.live_z:
+        z = np.load(args.live_z)
+        if z.shape != (len(FEATURE_NAMES),):
+            raise SystemExit("live-z length does not match FEATURE_NAMES; regenerate it")
+        ablation_mask = z > float(args.z_max)
+        x = x.copy()
+        x[:, ablation_mask] = 0.0
+        print(
+            f"live-OOD ablation: zeroed {int(ablation_mask.sum())}/{len(FEATURE_NAMES)} "
+            f"columns with z > {args.z_max}",
+            flush=True,
+        )
+
     cv_model_config = ModelConfig(
         trees=args.cv_trees,
         hist_iterations=args.cv_hist_iterations,
@@ -520,6 +558,7 @@ def main() -> None:
         finalists=args.finalists,
         windows_per_date=args.windows_per_date,
         seed=args.seed,
+        bot_frac=args.window_bot_frac,
     )
     print(
         "Selected: "
@@ -534,6 +573,7 @@ def main() -> None:
         window_size=40,
         windows_per_date=args.windows_per_date,
         seed=args.seed + 20000,
+        bot_frac=args.window_bot_frac,
     )
     selection_eval_100 = _evaluate_predictions(
         selection_folds,
@@ -541,6 +581,7 @@ def main() -> None:
         window_size=100,
         windows_per_date=max(10, args.windows_per_date // 2),
         seed=args.seed + 30000,
+        bot_frac=args.window_bot_frac,
     )
 
     final_model_config = ModelConfig(
@@ -583,6 +624,7 @@ def main() -> None:
         window_size=40,
         windows_per_date=max(100, args.windows_per_date),
         seed=args.seed + 40000,
+        bot_frac=args.window_bot_frac,
     )
     holdout_eval_100 = _evaluate_predictions(
         holdout_folds,
@@ -590,6 +632,7 @@ def main() -> None:
         window_size=100,
         windows_per_date=max(50, args.windows_per_date // 2),
         seed=args.seed + 50000,
+        bot_frac=args.window_bot_frac,
     )
     print(
         f"LOCKED holdout | n=40 mean={holdout_eval_40['window_mean']:.4f} "
@@ -649,6 +692,8 @@ def main() -> None:
             "dates": unique_dates,
             "model_config": asdict(final_model_config),
             "sample_date_power": float(args.sample_date_power),
+            "ablation_mask": ablation_mask,
+            "window_bot_frac": float(args.window_bot_frac),
             "selection_dates": selection_dates,
             "locked_holdout_dates": holdout_dates,
         }

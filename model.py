@@ -65,6 +65,15 @@ class Poker44Model:
             raise ValueError("V4 batch_top_fraction must be between zero and one")
         if not {"cut", "scale"}.issubset(self.mapper) or float(self.mapper["scale"]) <= 0.0:
             raise ValueError("V4 mapper is invalid")
+        # Live-OOD ablation: columns zeroed during training (measured z>threshold
+        # vs captured validator chunks) must be zeroed identically at serve time.
+        mask = artifact.get("ablation_mask")
+        self.ablation_mask = None
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            if mask.shape != (len(FEATURE_NAMES),):
+                raise ValueError("V4 ablation mask does not match the feature schema")
+            self.ablation_mask = mask
 
     @staticmethod
     def _clean(chunks: Sequence[Sequence[Dict[str, Any]]]) -> List[List[Dict[str, Any]]]:
@@ -79,6 +88,8 @@ class Poker44Model:
         clean = self._clean(chunks)
         empty = np.asarray([len(chunk) == 0 for chunk in clean], dtype=bool)
         matrix = matrix_for_chunks(clean)
+        if self.ablation_mask is not None:
+            matrix[:, self.ablation_mask] = 0.0
         branches = self.model.branch_scores(matrix)
         mode = self.blend_mode if len(clean) >= _MIN_BATCH_FOR_RANK else "probability"
         keys = [chunk_tie_key(chunk) for chunk in clean]

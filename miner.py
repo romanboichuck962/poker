@@ -74,7 +74,7 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-coherent",
-                "model_version": "1",
+                "model_version": "2",
                 "framework": "v4-coherent-rank-robust (adapted from UID176 pd-coast model_v4 v4.1): 821 order-invariant features (353-col behavioral distribution view + 468 chunk-coherence columns: 54 per-hand scalars x 8 stats and 6 replay-signature kinds x 6 stats); nine branches - ExtraTrees/RandomForest/HistGradientBoosting on the coherence view, regularized ExtraTrees + robust LogisticRegression on the combined view, a LedoitWolf Mahalanobis human-tail prototype, and HGB/ExtraTrees/LogisticRegression trained on within-date feature percentiles and served on within-request feature percentiles (scale-invariant under benchmark->live distribution shift); chronological walk-forward selection of branch weights, blend mode and positive fraction; exact rank-preserving boundary map placing the top fraction of each request batch in [0.501,0.509] with behavior-hash tie-breaking; sanitized train==serve",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v1: faithful port of UID176 pd-coast v4.1 coherent rank-robust challenger, retrained on our full benchmark history with walk-forward model/mapper selection. Request-relative percentile branches carry the live-shift robustness; exact rank budget secures the FPR/safety floor without reordering.",
+                "notes": "uid242 v2: UID176 pd-coast v4.1 coherent rank-robust port, plus measured live-OOD ablation (115/821 feature columns with |z|>5 vs captured validator chunks zeroed in train and serve) and branch-weight selection on live-composition (20% bot) request windows. Request-relative percentile branches carry the live-shift robustness; exact rank budget secures the FPR/safety floor without reordering.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
