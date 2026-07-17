@@ -73,9 +73,9 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker44-neptune-rocket",
-                "model_version": "21",
-                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 200 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); walk-forward-selected blend weights; sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
+                "model_name": "poker44-neptune-coherent",
+                "model_version": "1",
+                "framework": "v4-coherent-rank-robust (adapted from UID176 pd-coast model_v4 v4.1): 821 order-invariant features (353-col behavioral distribution view + 468 chunk-coherence columns: 54 per-hand scalars x 8 stats and 6 replay-signature kinds x 6 stats); nine branches - ExtraTrees/RandomForest/HistGradientBoosting on the coherence view, regularized ExtraTrees + robust LogisticRegression on the combined view, a LedoitWolf Mahalanobis human-tail prototype, and HGB/ExtraTrees/LogisticRegression trained on within-date feature percentiles and served on within-request feature percentiles (scale-invariant under benchmark->live distribution shift); chronological walk-forward selection of branch weights, blend mode and positive fraction; exact rank-preserving boundary map placing the top fraction of each request batch in [0.501,0.509] with behavior-hash tie-breaking; sanitized train==serve",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -85,10 +85,10 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-16 (including v1.13), "
+                    "2026-07-17 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
-                    "training matches serving. See deploy_rocket.py for training "
-                    "(architecture adapted from UID163's rocket-r2) and promote gates."
+                    "training matches serving. See train_v4.py for training "
+                    "(architecture adapted from UID176's public pd-coast model_v4)."
                 ),
                 "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "v19: switched to UID163 (rocket-r2)'s four-component architecture (stack+mono+mlp+drse, weighted-logit fusion) adapted to our own PH/hero-free feature views; walk-forward-selected blend weights (stack 0.28, mono 0.18, mlp 0.32, drse 0.22); sanitized train; remap+smart-minpos+16%cap; force-deployed by explicit request despite a small offline reward tradeoff vs the prior best-of-3 rank-blend (0.898 vs 0.911 walk-forward).",
+                "notes": "uid242 v1: faithful port of UID176 pd-coast v4.1 coherent rank-robust challenger, retrained on our full benchmark history with walk-forward model/mapper selection. Request-relative percentile branches carry the live-shift robustness; exact rank budget secures the FPR/safety floor without reordering.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

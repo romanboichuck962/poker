@@ -8,3 +8,5 @@ autopilot.log
 *.out
 captures/
 catboost_info/
+artifacts/v4_features.npz
+*.log
