@@ -1,18 +1,18 @@
 {
-  "cv_ap": 0.9413087348343687,
-  "cv_bot_recall": 0.7312925170068028,
+  "cv_ap": 0.9462399696193197,
+  "cv_bot_recall": 0.7666666666666667,
   "cv_fpr": 0.0,
-  "cv_reward": 0.8988458122940698,
+  "cv_reward": 0.9103628307634933,
   "cv_safety": 1.0,
-  "hard_bot_recall": 0.3197278911564626,
-  "n_dates": 52,
-  "positive_rate": 0.1598639455782313,
+  "hard_bot_recall": 0.32,
+  "n_dates": 53,
+  "positive_rate": 0.16,
   "selected": "rocket-p44r1: sklearn-stack+monotone-xgb+pca-mlp+drse/weighted-logit-fusion; weighted-logit fusion(stack 0.28 + mono 0.18 + mlp 0.32 + drse 0.22) of stack/mono on PH + mlp on UN + drse on V2; walk-forward weights; targetFPR=5%; remap+smart-minpos+16%cap; adapted from UID163 rocket-r2",
-  "trained_at": "2026-07-16T16:07:41.329833+00:00",
+  "trained_at": "2026-07-17T06:39:41.732079+00:00",
   "walk_forward": [
     {
-      "cv_reward_prior": 0.8837563194388233,
-      "n_walkforward": 588,
+      "cv_reward_prior": 0.9042436415971237,
+      "n_walkforward": 600,
       "weights": {
         "drse": 0.22,
         "mlp": 0.32,
