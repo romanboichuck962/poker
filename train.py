@@ -7,7 +7,7 @@ the validator's own reward formula, and saves the winning calibrated pipeline
 to artifacts/poker44_model.joblib.
 
 Usage:
-    python train.py --data /root/Poker44-subnet/data/benchmark
+    python train.py --data /root/POKER44-SUBNET-1/data/benchmark
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from xgboost import XGBClassifier
 
 from model import extract_group_features, recenter_scores
 
-sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/POKER44-SUBNET-1")
 from poker44.score.scoring import reward  # noqa: E402  (validator formula)
 
 
@@ -139,7 +139,7 @@ def oof_threshold(base, X, y, groups, cv, max_fpr: float = 0.05) -> float:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", default="/root/Poker44-subnet/data/benchmark")
+    parser.add_argument("--data", default="/root/POKER44-SUBNET-1/data/benchmark")
     parser.add_argument("--holdout-date", default=None,
                         help="Release date held out for final scoring (default: newest)")
     parser.add_argument("--out", default=str(Path(__file__).parent / "artifacts" / "poker44_model.joblib"))

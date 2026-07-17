@@ -31,14 +31,14 @@ from sklearn.model_selection import GroupKFold, cross_val_predict  # noqa: E402
 from xgboost import XGBClassifier  # noqa: E402
 
 sys.path.insert(0, "/root/poker")
-sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/POKER44-SUBNET-1")
 from model import _HAND_KEYS, _hand_features, recenter_scores  # noqa: E402
 from robust_select import load_cache, per_window_reward  # noqa: E402
 from train import fpr_threshold  # noqa: E402
 
 torch.manual_seed(42)
 torch.set_num_threads(4)
-DATA = Path("/root/Poker44-subnet/data/benchmark")
+DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
 MAXH = 40
 FDIM = len(_HAND_KEYS)
 

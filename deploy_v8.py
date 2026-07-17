@@ -23,7 +23,7 @@ import numpy as np
 warnings.filterwarnings("ignore")
 
 sys.path.insert(0, "/root/poker")
-sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/POKER44-SUBNET-1")
 from lightgbm import LGBMClassifier
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import GroupKFold, cross_val_predict
@@ -34,7 +34,7 @@ from model import extract_group_features, recenter_scores, FEATURE_NAMES  # noqa
 from poker44.score.scoring import reward  # noqa
 from train import fpr_threshold  # noqa
 
-DATA = Path("/root/Poker44-subnet/data/benchmark")
+DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
 CACHE = Path("/tmp/claude-0/-root-Poker44-subnet/e7fcc35d-0d27-44fa-9895-49d8694f9df1/scratchpad/x207.npz")
 OUT = Path("/root/poker/artifacts/poker44_model.joblib")
 

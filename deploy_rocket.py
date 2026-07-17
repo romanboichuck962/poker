@@ -56,7 +56,7 @@ from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, "/root/poker")
-sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/POKER44-SUBNET-1")
 
 import catboost as cb
 import lightgbm as lgb
@@ -83,7 +83,7 @@ from promote_guard import (  # noqa: E402
 )
 from rocket_ensemble import PARTS, RocketEnsemble, blend
 
-DATA = Path("/root/Poker44-subnet/data/benchmark")
+DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
 SERVING_DIR = Path("/root/poker/artifacts")
 STAGING_DIR = Path("/root/poker/artifacts_staging")
 BACKUPS_DIR = Path("/root/poker/artifacts_backups")

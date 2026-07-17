@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import joblib
 warnings.filterwarnings("ignore")
-sys.path.insert(0, "/root/poker"); sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/poker"); sys.path.insert(0, "/root/POKER44-SUBNET-1")
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesClassifier, VotingClassifier
 from sklearn.impute import SimpleImputer
@@ -36,7 +36,7 @@ from model import (extract_group_features, recenter_scores, FEATURE_NAMES,
 from poker44.score.scoring import reward
 from train import fpr_threshold
 
-DATA = Path("/root/Poker44-subnet/data/benchmark")
+DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
 OUT = Path("/root/poker/artifacts/poker44_model.joblib")
 AMOUNT_SUBSTR = ("size_bb","pot_ratio","roundness","pot_hist","pot_modal","distinct_size","distinct_pot","size_cv","_size_","total_pot")
 COLS = [i for i,n in enumerate(FEATURE_NAMES) if not any(s in n for s in AMOUNT_SUBSTR)]

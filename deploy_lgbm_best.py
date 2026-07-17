@@ -33,7 +33,7 @@ from sklearn.model_selection import GroupKFold
 
 warnings.filterwarnings("ignore")
 sys.path.insert(0, "/root/poker")
-sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/POKER44-SUBNET-1")
 
 import importlib
 import model as M
@@ -58,7 +58,7 @@ from promote_guard import (  # noqa: E402
     read_meta,
 )
 
-DATA = Path("/root/Poker44-subnet/data/benchmark")
+DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
 SERVING_DIR = Path("/root/poker/artifacts")
 STAGING_DIR = Path("/root/poker/artifacts_staging")
 BACKUPS_DIR = Path("/root/poker/artifacts_backups")

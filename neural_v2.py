@@ -26,7 +26,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score  # noqa: E402
 from sklearn.model_selection import GroupKFold, cross_val_predict  # noqa: E402
 
 sys.path.insert(0, "/root/poker")
-sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/POKER44-SUBNET-1")
 from model import recenter_scores  # noqa: E402
 from neural_mil import FDIM, build_hand_cache, build_stack  # noqa: E402
 from robust_select import load_cache, per_window_reward  # noqa: E402

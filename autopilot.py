@@ -33,13 +33,13 @@ def log(msg: str) -> None:
 
 
 def refresh_benchmark() -> None:
-    script = Path("/root/Poker44-subnet/scripts/download_benchmark.py")
+    script = Path("/root/POKER44-SUBNET-1/scripts/download_benchmark.py")
     if not script.exists():
         log("REFRESH: download_benchmark.py missing; using cached releases")
         return
     proc = subprocess.run(
-        [sys.executable, str(script), "--out", "/root/Poker44-subnet/data/benchmark"],
-        cwd="/root/Poker44-subnet",
+        [sys.executable, str(script), "--out", "/root/POKER44-SUBNET-1/data/benchmark"],
+        cwd="/root/POKER44-SUBNET-1",
         capture_output=True,
         text=True,
     )

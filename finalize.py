@@ -17,7 +17,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import average_precision_score, roc_auc_score
 
 sys.path.insert(0, "/root/poker")
-sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/POKER44-SUBNET-1")
 from model import recenter_scores  # noqa: E402
 from poker44.score.scoring import reward  # noqa: E402
 from robust_select import load_cache, per_window_reward  # noqa: E402

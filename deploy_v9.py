@@ -19,7 +19,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 warnings.filterwarnings("ignore")
-sys.path.insert(0, "/root/poker"); sys.path.insert(0, "/root/Poker44-subnet")
+sys.path.insert(0, "/root/poker"); sys.path.insert(0, "/root/POKER44-SUBNET-1")
 
 import json
 from sklearn.compose import ColumnTransformer
@@ -35,7 +35,7 @@ from model import extract_group_features, recenter_scores, FEATURE_NAMES  # noqa
 from poker44.score.scoring import reward  # noqa
 from train import fpr_threshold  # noqa
 
-DATA = Path("/root/Poker44-subnet/data/benchmark")
+DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
 OUT = Path("/root/poker/artifacts/poker44_model.joblib")
 AMOUNT_SUBSTR = ("size_bb", "pot_ratio", "roundness", "pot_hist", "pot_modal",
                  "distinct_size", "distinct_pot", "size_cv", "_size_", "total_pot")
