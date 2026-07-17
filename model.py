@@ -1,20 +1,21 @@
-"""Poker44 serving model for uid 242 — V4 coherent rank-robust detector.
+"""Poker44 serving model for uid 242 — D0Draco (UID172's method).
 
-Faithful adaptation of UID176's public pd-coast model_v4 ("p44-v4-coherent
--rank-robust", v4.1): 821 order-invariant features (353-col distribution view
-+ 468 chunk-coherence columns), nine branches (six on raw features, three on
-request-relative feature percentiles), walk-forward-selected branch weights /
-blend mode / positive fraction, and an exact rank-preserving boundary map that
-places the top fraction of each request batch just above 0.5.
+Faithful adaptation of UID172's public poker44-benchmark-huge-2 (commit
+67ec343, model "poker44-draco" v3.6, serving logic from model/infer.py):
 
-The request-relative percentile branches are the core idea: live validator
-payloads are far outside the labeled benchmark envelope (we measured ~37% of
-feature cells outside q01-q99 on captured chunks, matching UID176's own
-report), which collapses raw probabilities. Within-request feature ranks keep
-the behavioral ordering, which is all AP/recall need.
+  * two feature views, identical code paths to training (train == serve):
+    phasberg (~293 dims: 40 per-hand scalars x 7 order-stats + 12 replay
+    signature features + hand_count) and features_v2 (~250 hero-free,
+    sanitization-invariant dims);
+  * D0Draco: weighted 4-member RANK-blend {stack .28, mono .24, mlp .28,
+    drse .20} — only each member's chunk ordering matters, which is what the
+    AP-dominated reward scores;
+  * rank-preserving post-processing: monotone remap of the deploy threshold
+    to 0.5, then a batch safety budget capping >=0.5 calls per request —
+    ranking (AP / recall@FPR) is never altered, only the decision boundary.
 
-Interface kept identical to the uid 77 model: MODEL_ARTIFACT + Poker44Model
-with score_chunks(chunks) -> list[float].
+Interface kept identical for miner.py: MODEL_ARTIFACT + Poker44Model with
+score_chunks(chunks) -> list[float].
 """
 
 from __future__ import annotations
@@ -26,81 +27,75 @@ from typing import Any, Dict, List, Sequence
 import joblib
 import numpy as np
 
-from v4.calibration import apply_mapper
-from v4.features import FEATURE_NAMES, FEATURE_SCHEMA_SHA256, matrix_for_chunks
-from v4.mapping import chunk_tie_key, exact_rank_map
-from v4.model import BRANCH_NAMES, blend_branches
-from v4.schema import clean_hand
+from d0.ensemble import D0Draco  # noqa: F401  (needed to unpickle the artifact)
+from d0.drse import DRSE  # noqa: F401  (DRSE instances live inside the pickle)
+from d0.views import phasberg_dict, v2_dict
 
 MODEL_ARTIFACT = Path(__file__).resolve().parent / "artifacts" / "poker44_model.joblib"
 
-# Percentile fusion and the exact rank map are meaningful only for a
-# validator-sized request; smaller calls use calibrated probability behavior.
-_MIN_BATCH_FOR_RANK = 8
 _EMPTY_SCORE = 0.1
 
 
+def _remap_to_threshold(p: np.ndarray, t: float) -> np.ndarray:
+    """Monotone piecewise-linear remap moving decision threshold t to 0.5."""
+    t = float(min(max(t, 1e-6), 1 - 1e-6))
+    out = np.where(p >= t, 0.5 + 0.5 * (p - t) / (1 - t), 0.5 * p / t)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _apply_batch_safety_budget(scores: np.ndarray, max_frac: float) -> np.ndarray:
+    """Cap the fraction of >=0.5 calls per batch WITHOUT changing the ranking."""
+    s = np.asarray(scores, dtype=float)
+    n = s.size
+    if n == 0 or max_frac >= 1.0:
+        return s
+    k = max(1, int(np.floor(max_frac * n)))
+    positive = np.flatnonzero(s >= 0.5)
+    if positive.size <= k:
+        return s
+    order = positive[np.argsort(-s[positive], kind="stable")]
+    squeeze = order[k:]
+    below = s[s < 0.5]
+    lo = min(float(below.max()) if below.size else 0.45, 0.499)
+    span = 0.5 - lo
+    out = s.copy()
+    m = squeeze.size
+    for rank, idx in enumerate(squeeze):
+        out[idx] = lo + span * (m - rank) / (m + 1.0)
+    return np.clip(out, 0.0, 1.0)
+
+
 class Poker44Model:
-    """Load and serve a V4 coherent artifact."""
+    """Load and serve a D0Draco artifact."""
 
     def __init__(self, artifact_path: Path | str = MODEL_ARTIFACT) -> None:
         artifact: Dict[str, Any] = joblib.load(artifact_path)
-        if artifact.get("artifact_version") != 4:
-            raise ValueError("not a Poker44 V4 artifact")
-        if list(artifact.get("feature_names") or []) != FEATURE_NAMES:
-            raise ValueError("V4 feature schema mismatch; retrain the artifact")
-        if artifact.get("feature_schema_sha256") != FEATURE_SCHEMA_SHA256:
-            raise ValueError("V4 feature schema fingerprint mismatch; retrain the artifact")
+        if artifact.get("kind") != "d0_draco":
+            raise ValueError("not a D0Draco artifact")
+        self.ens: D0Draco = artifact["ens"]
+        self.threshold = float(artifact["threshold"])
+        self.max_pos_frac = float(
+            os.getenv("POKER44_MAX_POS_FRAC") or artifact.get("max_pos_frac", 0.16)
+        )
+        self.cols_ph = list(artifact["cols_ph"])
+        self.cols_v2 = list(artifact["cols_v2"])
         self.artifact = artifact
-        self.model = artifact["model"]
-        if tuple(getattr(self.model, "branch_names", ())) != BRANCH_NAMES:
-            raise ValueError("V4 branch schema mismatch; retrain the artifact")
-        self.mapper = dict(artifact["mapper"])
-        self.blend_mode = str(artifact.get("blend_mode", "probability"))
-        if self.blend_mode not in {"probability", "rank"}:
-            raise ValueError("V4 blend mode must be probability or rank")
-        fraction = os.getenv("P44_TOP_FRAC") or artifact.get("batch_top_fraction", 0.10)
-        self.batch_top_fraction = float(fraction)
-        if not 0.0 < self.batch_top_fraction < 1.0:
-            raise ValueError("V4 batch_top_fraction must be between zero and one")
-        if not {"cut", "scale"}.issubset(self.mapper) or float(self.mapper["scale"]) <= 0.0:
-            raise ValueError("V4 mapper is invalid")
-        # Live-OOD ablation: columns zeroed during training (measured z>threshold
-        # vs captured validator chunks) must be zeroed identically at serve time.
-        mask = artifact.get("ablation_mask")
-        self.ablation_mask = None
-        if mask is not None:
-            mask = np.asarray(mask, dtype=bool)
-            if mask.shape != (len(FEATURE_NAMES),):
-                raise ValueError("V4 ablation mask does not match the feature schema")
-            self.ablation_mask = mask
 
-    @staticmethod
-    def _clean(chunks: Sequence[Sequence[Dict[str, Any]]]) -> List[List[Dict[str, Any]]]:
-        return [
-            [clean_hand(hand) for hand in (chunk or []) if isinstance(hand, dict)]
-            for chunk in chunks
-        ]
+    def _matrices(self, chunks: Sequence[List[Dict[str, Any]]]):
+        ph = np.array([[float(d.get(c, 0.0)) for c in self.cols_ph]
+                       for d in (phasberg_dict(c) for c in chunks)], dtype=float)
+        v2 = np.array([[float(d.get(c, 0.0)) for c in self.cols_v2]
+                       for d in (v2_dict(c) for c in chunks)], dtype=float)
+        ph = np.nan_to_num(ph, nan=0.0, posinf=0.0, neginf=0.0)
+        v2 = np.nan_to_num(v2, nan=0.0, posinf=0.0, neginf=0.0)
+        return ph, v2
 
-    def score_chunks(self, chunks: Sequence[Sequence[Dict[str, Any]]]) -> List[float]:
+    def score_chunks(self, chunks: Sequence[List[Dict[str, Any]]]) -> List[float]:
         if not chunks:
             return []
-        clean = self._clean(chunks)
-        empty = np.asarray([len(chunk) == 0 for chunk in clean], dtype=bool)
-        matrix = matrix_for_chunks(clean)
-        if self.ablation_mask is not None:
-            matrix[:, self.ablation_mask] = 0.0
-        branches = self.model.branch_scores(matrix)
-        mode = self.blend_mode if len(clean) >= _MIN_BATCH_FOR_RANK else "probability"
-        keys = [chunk_tie_key(chunk) for chunk in clean]
-        raw = blend_branches(branches, self.model.branch_weights_, mode, tie_keys=keys)
-        # Empty chunks carry no behavior: rank them at the bottom so the exact
-        # rank map can never spend a positive slot on one.
-        raw = np.where(empty, 1e-6, raw)
-        if len(clean) >= _MIN_BATCH_FOR_RANK:
-            scores = exact_rank_map(raw, self.batch_top_fraction, tie_keys=keys)
-        else:
-            scores = apply_mapper(raw, self.mapper)
-        scores = np.nan_to_num(scores, nan=0.5, posinf=0.99, neginf=0.01)
-        scores = np.where(empty, _EMPTY_SCORE, scores)
-        return [round(float(np.clip(value, 0.01, 0.99)), 8) for value in scores]
+        ph, v2 = self._matrices(chunks)
+        p = self.ens.score(ph, v2)
+        scores = _remap_to_threshold(np.asarray(p, dtype=float), self.threshold)
+        scores = _apply_batch_safety_budget(scores, self.max_pos_frac)
+        return [_EMPTY_SCORE if not chunk else round(float(s), 6)
+                for chunk, s in zip(chunks, scores)]

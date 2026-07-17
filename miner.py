@@ -73,9 +73,9 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker44-neptune-coherent",
-                "model_version": "2",
-                "framework": "v4-coherent-rank-robust (adapted from UID176 pd-coast model_v4 v4.1): 821 order-invariant features (353-col behavioral distribution view + 468 chunk-coherence columns: 54 per-hand scalars x 8 stats and 6 replay-signature kinds x 6 stats); nine branches - ExtraTrees/RandomForest/HistGradientBoosting on the coherence view, regularized ExtraTrees + robust LogisticRegression on the combined view, a LedoitWolf Mahalanobis human-tail prototype, and HGB/ExtraTrees/LogisticRegression trained on within-date feature percentiles and served on within-request feature percentiles (scale-invariant under benchmark->live distribution shift); chronological walk-forward selection of branch weights, blend mode and positive fraction; exact rank-preserving boundary map placing the top fraction of each request batch in [0.501,0.509] with behavior-hash tie-breaking; sanitized train==serve",
+                "model_name": "poker44-neptune-draco",
+                "model_version": "3",
+                "framework": "d0-draco (adapted from UID172 poker44-benchmark-huge-2): weighted 4-member rank-blend {stack .28, mono .24, mlp .28, drse .20} on three feature views - a 56-leaf benchmark-supervised StackingClassifier (LGBM+XGBoost+CatBoost+ExtraTrees+RF -> LogisticRegression, cv4) and a 3-seed depth-5 sign-mined monotone XGBoost committee on the phasberg view (293 dims: 40 per-hand scalars x 7 order-stats + 12 replay-signature features + hand_count), a 4-seed PCA-44 MLP(64,32) committee on the v2+phasberg union, and a drift-robust subspace ensemble (n=8, feature-fraction 0.75, bagged ExtraTrees/HistGBM on random feature subspaces) on the hero-free sanitization-invariant v2 view (250 dims, validator bb-bucket-grid sizing); rank averaging is calibration-agnostic and only chunk ordering matters; serving applies a monotone deploy-threshold remap to 0.5 (threshold = holdout human quantile at 4% target FPR) plus a 16% batch safety budget, both rank-preserving; sanitized train==serve",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -87,8 +87,8 @@ class Miner(BaseMinerNeuron):
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
                     "2026-07-17 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
-                    "training matches serving. See train_v4.py for training "
-                    "(architecture adapted from UID176's public pd-coast model_v4)."
+                    "training matches serving. See train_d0.py for training "
+                    "(architecture adapted from UID172's public poker44-benchmark-huge-2)."
                 ),
                 "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v2: UID176 pd-coast v4.1 coherent rank-robust port, plus measured live-OOD ablation (115/821 feature columns with |z|>5 vs captured validator chunks zeroed in train and serve) and branch-weight selection on live-composition (20% bot) request windows. Request-relative percentile branches carry the live-shift robustness; exact rank budget secures the FPR/safety floor without reordering.",
+                "notes": "uid242 v3: switched to UID172's D0Draco method (rank-blend of stack/mono/mlp/drse over phasberg+v2 views) after the UID176-style coherent port underperformed live; members built to UID172's published spec strings, trained on the full sanitized benchmark with a locked 2-date holdout evaluated on live-composition request windows.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
