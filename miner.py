@@ -74,8 +74,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-rocket",
-                "model_version": "21",
-                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 200 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); walk-forward-selected blend weights; sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
+                "model_version": "22",
+                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 400 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); walk-forward-selected blend weights; sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -85,7 +85,7 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-16 (including v1.13), "
+                    "2026-07-18 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
                     "training matches serving. See deploy_rocket.py for training "
                     "(architecture adapted from UID163's rocket-r2) and promote gates."
