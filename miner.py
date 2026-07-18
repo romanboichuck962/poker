@@ -73,9 +73,9 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker44-neptune-draco",
-                "model_version": "4",
-                "framework": "d0-draco (adapted from UID172 poker44-benchmark-huge-2): weighted 4-member rank-blend {stack .28, mono .24, mlp .28, drse .20} on three feature views - a 56-leaf benchmark-supervised StackingClassifier (LGBM+XGBoost+CatBoost+ExtraTrees+RF -> LogisticRegression, cv4) and a 3-seed depth-5 sign-mined monotone XGBoost committee on the phasberg view (293 dims: 40 per-hand scalars x 7 order-stats + 12 replay-signature features + hand_count), a 4-seed PCA-44 MLP(64,32) committee on the v2+phasberg union, and a drift-robust subspace ensemble (n=8, feature-fraction 0.75, bagged ExtraTrees/HistGBM on random feature subspaces) on the hero-free sanitization-invariant v2 view (250 dims, validator bb-bucket-grid sizing); rank averaging is calibration-agnostic and only chunk ordering matters; serving applies a monotone deploy-threshold remap to 0.5 (threshold = holdout human quantile at 4% target FPR) plus a 16% batch safety budget, both rank-preserving; sanitized train==serve",
+                "model_name": "poker44-neptune-rocket",
+                "model_version": "5",
+                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 400 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); walk-forward-selected blend weights; sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -87,8 +87,8 @@ class Miner(BaseMinerNeuron):
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
                     "2026-07-18 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
-                    "training matches serving. See train_d0.py for training "
-                    "(architecture adapted from UID172's public poker44-benchmark-huge-2)."
+                    "training matches serving. See deploy_rocket.py for training "
+                    "(architecture adapted from UID163's rocket-r2) and promote gates."
                 ),
                 "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v4: UID172 D0Draco retrained on benchmark through 2026-07-18 (54 releases) with weight control from both benchmark and captures - measured live-OOD ablation (phasberg 97/293, v2 81/250 columns z>5 vs 400 captured validator chunks zeroed in train and serve) plus walk-forward blend-weight selection on live-composition 100-chunk windows (kept UID172's prior {stack .28, mono .24, mlp .28, drse .20}, best rival did not clear margin). Ablation lifted live rank-agreement with the proven uid77 rocket from 0.49 to 0.64.",
+                "notes": "uid242 v5: switched from the UID172 D0Draco port to uid77's proven UID163 rocket-r2 method (stack+mono+mlp+drse weighted-logit fusion; walk-forward-selected blend weights stack 0.28, mono 0.18, mlp 0.32, drse 0.22; measured live-OOD z>5 ablation from 400 captured validator chunks; sanitized train; remap-to-0.5 + smart min-positive + batch positive-fraction cap). Same architecture and trained artifact as uid77's v22 (identical benchmark through 2026-07-18 and capture snapshot yield the identical deterministic rocket artifact); run as an independent second entry, validated by a live-capture serving smoke test.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
