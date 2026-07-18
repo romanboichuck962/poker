@@ -79,6 +79,12 @@ class Poker44Model:
         )
         self.cols_ph = list(artifact["cols_ph"])
         self.cols_v2 = list(artifact["cols_v2"])
+        # Live-OOD ablation masks (pillar 2): columns zeroed in training must be
+        # zeroed identically at serve. Absent on pre-ablation artifacts.
+        mp = artifact.get("ood_mask_ph")
+        mv = artifact.get("ood_mask_v2")
+        self.mask_ph = np.asarray(mp, dtype=bool) if mp is not None else None
+        self.mask_v2 = np.asarray(mv, dtype=bool) if mv is not None else None
         self.artifact = artifact
 
     def _matrices(self, chunks: Sequence[List[Dict[str, Any]]]):
@@ -88,6 +94,10 @@ class Poker44Model:
                        for d in (v2_dict(c) for c in chunks)], dtype=float)
         ph = np.nan_to_num(ph, nan=0.0, posinf=0.0, neginf=0.0)
         v2 = np.nan_to_num(v2, nan=0.0, posinf=0.0, neginf=0.0)
+        if self.mask_ph is not None:
+            ph[:, self.mask_ph] = 0.0
+        if self.mask_v2 is not None:
+            v2[:, self.mask_v2] = 0.0
         return ph, v2
 
     def score_chunks(self, chunks: Sequence[List[Dict[str, Any]]]) -> List[float]:

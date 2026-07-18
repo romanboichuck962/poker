@@ -57,6 +57,7 @@ from d0.ensemble import D0Draco, W
 from d0.views import phasberg_dict, v2_dict
 
 DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
+CAP_DIR = Path("/root/poker/captures")
 ART = Path(__file__).resolve().parent / "artifacts"
 NJ = 4
 SEED = 172
@@ -65,6 +66,22 @@ MAX_POS_FRAC = 0.16        # their infer.py default budget
 HOLDOUT_DAYS = 2
 WINDOW_BOT_FRAC = 0.20     # live-realistic request composition
 MONO_MIN_DATES, MONO_MIN_RHO, MONO_MIN_AGREE = 4, 0.04, 0.70
+Z_MAX = 5.0                # live-OOD ablation threshold (pillar 2)
+WF_DATES = 4               # walk-forward dates for blend-weight selection
+W_SELECT_MARGIN = 0.003    # reward gain required to abandon UID172's prior
+
+# UID172's published prior + a grid of decorrelated variations around it.
+W_PRIOR = dict(W)          # {stack .28, mono .24, mlp .28, drse .20}
+W_GRID = [
+    W_PRIOR,
+    {"stack": 0.30, "mono": 0.20, "mlp": 0.30, "drse": 0.20},
+    {"stack": 0.26, "mono": 0.22, "mlp": 0.30, "drse": 0.22},
+    {"stack": 0.24, "mono": 0.18, "mlp": 0.34, "drse": 0.24},
+    {"stack": 0.30, "mono": 0.26, "mlp": 0.26, "drse": 0.18},
+    {"stack": 0.32, "mono": 0.22, "mlp": 0.28, "drse": 0.18},
+    {"stack": 0.22, "mono": 0.20, "mlp": 0.32, "drse": 0.26},
+    {"stack": 0.28, "mono": 0.20, "mlp": 0.32, "drse": 0.20},
+]
 
 STACK_CFG = dict(lgb_n=600, lgb_lr=0.03, lgb_leaves=56,
                  xgb_n=550, xgb_lr=0.04, xgb_depth=5,
@@ -191,21 +208,154 @@ def make_mlp():
         voting="soft", n_jobs=1)
 
 
-def fit_draco(PH, V2, y, dates, rows, cols_ph, cols_v2):
+def fit_members(PH, V2, y, dates, rows, verbose=True):
     UN = np.hstack([V2, PH])
     unique = sorted(set(dates[rows]))
     signs = mine_monotone_signs(PH[rows], y[rows], dates[rows], unique)
-    print(f"  mono signs: +{sum(1 for s in signs if s > 0)} "
-          f"-{sum(1 for s in signs if s < 0)} 0:{sum(1 for s in signs if s == 0)}")
+    if verbose:
+        print(f"  mono signs: +{sum(1 for s in signs if s > 0)} "
+              f"-{sum(1 for s in signs if s < 0)} 0:{sum(1 for s in signs if s == 0)}")
     t0 = time.time()
-    stack = make_stack().fit(PH[rows], y[rows]); print(f"  stack fit {time.time()-t0:.0f}s")
-    t0 = time.time()
-    mono = make_mono(signs).fit(PH[rows], y[rows]); print(f"  mono fit {time.time()-t0:.0f}s")
-    t0 = time.time()
-    mlp = make_mlp().fit(UN[rows], y[rows]); print(f"  mlp fit {time.time()-t0:.0f}s")
-    t0 = time.time()
-    drse = DRSE(**DRSE_CFG).fit(V2[rows], y[rows]); print(f"  drse fit {time.time()-t0:.0f}s")
-    return D0Draco(stack, mono, mlp, drse, cols_ph, cols_v2, weights=W)
+    stack = make_stack().fit(PH[rows], y[rows])
+    mono = make_mono(signs).fit(PH[rows], y[rows])
+    mlp = make_mlp().fit(UN[rows], y[rows])
+    drse = DRSE(**DRSE_CFG).fit(V2[rows], y[rows])
+    if verbose:
+        print(f"  members fit {time.time()-t0:.0f}s")
+    return {"stack": stack, "mono": mono, "mlp": mlp, "drse": drse}
+
+
+def member_probs(members, PH, V2, rows):
+    UN = np.hstack([V2, PH])
+    return {
+        "stack": members["stack"].predict_proba(PH[rows])[:, 1],
+        "mono": members["mono"].predict_proba(PH[rows])[:, 1],
+        "mlp": members["mlp"].predict_proba(UN[rows])[:, 1],
+        "drse": members["drse"].predict_proba(V2[rows])[:, 1],
+    }
+
+
+def fit_draco(PH, V2, y, dates, rows, cols_ph, cols_v2, weights):
+    members = fit_members(PH, V2, y, dates, rows)
+    return D0Draco(members["stack"], members["mono"], members["mlp"], members["drse"],
+                   cols_ph, cols_v2, weights=weights)
+
+
+PARTS = ("stack", "mono", "mlp", "drse")
+
+
+def _rank01(s):
+    s = np.asarray(s, dtype=float)
+    n = s.size
+    if n <= 1:
+        return np.zeros(n)
+    return np.argsort(np.argsort(s, kind="stable"), kind="stable").astype(float) / (n - 1)
+
+
+def rank_blend(part_probs, weights):
+    """Replicate D0Draco.score's rank-average for a set of per-member probs."""
+    w = weights
+    r = sum(w[p] * _rank01(part_probs[p]) for p in PARTS)
+    return r / sum(w[p] for p in PARTS)
+
+
+def load_captures():
+    caps = []
+    for p in sorted(CAP_DIR.glob("*.json")):
+        h = json.loads(p.read_text())
+        if isinstance(h, dict):
+            h = h.get("hands") or h.get("chunk") or []
+        if h:
+            caps.append(h)
+    return caps
+
+
+def compute_ood_masks(cols_ph, cols_v2):
+    """Per-view boolean masks of columns with live-vs-benchmark z > Z_MAX.
+
+    live = captured validator chunks; bench = size-matched pooled sanitized
+    benchmark groups. Uses captures (pillar 2) to drop structurally-OOD columns
+    from both views in training AND serving."""
+    caps = load_captures()
+    if not caps:
+        print("no captures; skipping OOD ablation", flush=True)
+        return np.zeros(len(cols_ph), bool), np.zeros(len(cols_v2), bool)
+    rng = np.random.default_rng(20260718)
+    target = int(np.median([len(c) for c in caps]))
+    bylab = {0: [], 1: []}
+    for path in sorted(DATA.glob("*.json")):
+        payload = json.loads(path.read_text())
+        for chunk in payload["chunks"]:
+            for group, label in zip(chunk["chunks"], chunk["groundTruth"]):
+                bylab[int(label)].append([prepare_hand_for_miner(h) for h in group])
+
+    def pool_to(pool, t):
+        order = rng.permutation(len(pool)); hands, i = [], 0
+        while len(hands) < t and i < len(order) * 3:
+            hands += list(pool[order[i % len(order)]]); i += 1
+        return hands[:t]
+
+    bench = [pool_to(bylab[l], target) for l in (0, 1) for _ in range(200)]
+
+    def mat(chunks, fn, cols):
+        return np.array([[float(d.get(c, 0.0)) for c in cols]
+                         for d in (fn(x) for x in chunks)], dtype=float)
+
+    masks = {}
+    for name, fn, cols in (("ph", phasberg_dict, cols_ph), ("v2", v2_dict, cols_v2)):
+        L = mat(caps, fn, cols); B = mat(bench, fn, cols)
+        z = np.abs(L.mean(0) - B.mean(0)) / (B.std(0) + 1e-9)
+        masks[name] = z > Z_MAX
+        print(f"  OOD ablation {name}: {int(masks[name].sum())}/{len(cols)} cols z>{Z_MAX}",
+              flush=True)
+    return masks["ph"], masks["v2"]
+
+
+def select_weights(oof_parts, y_oof, covered_idx, seed=SEED):
+    """Walk-forward-select blend weights on live-realistic request windows.
+
+    Each candidate is scored exactly as it serves: rank-blend within a
+    100-chunk 20%-bot window, deploy-threshold remap (per-candidate human
+    quantile at 1-TARGET_FPR on the pooled OOF), 16% budget, our reward()."""
+    rng = np.random.default_rng(seed + 999)
+    pos = covered_idx[y_oof == 1]
+    neg = covered_idx[y_oof == 0]
+    k_pos = max(1, int(round(100 * WINDOW_BOT_FRAC)))
+    windows = []
+    for _ in range(150):
+        p = rng.choice(pos, k_pos, replace=len(pos) < k_pos)
+        n = rng.choice(neg, 100 - k_pos, replace=len(neg) < 100 - k_pos)
+        idx = np.concatenate([p, n]); rng.shuffle(idx)
+        windows.append(idx)
+    pos_set = set(pos.tolist())
+    results = []
+    for cand in W_GRID:
+        pooled_blend = rank_blend({p: oof_parts[p] for p in PARTS}, cand)
+        human = pooled_blend[np.isin(covered_idx, neg)]
+        thr = float(np.quantile(human, 1 - TARGET_FPR)) if human.size else 0.5
+        rewards = []
+        for idx in windows:
+            parts = {p: oof_parts[p][np.searchsorted(covered_idx, idx)] for p in PARTS}
+            raw = rank_blend(parts, cand)
+            served = apply_budget(remap_to_threshold(raw, thr))
+            labels = np.array([1 if i in pos_set else 0 for i in idx])
+            value, _ = validator_reward(served, labels)
+            rewards.append(float(value))
+        r = np.asarray(rewards)
+        results.append((cand, float(r.mean()), float(np.quantile(r, 0.10))))
+    prior_reward = results[0][1]
+    best = max(results, key=lambda t: t[1])
+    for cand, mean, p10 in results:
+        tag = "prior" if cand is W_GRID[0] else "     "
+        print(f"    {tag} {{{', '.join(f'{k}:{cand[k]:.2f}' for k in PARTS)}}} "
+              f"reward={mean:.4f} p10={p10:.4f}", flush=True)
+    if best[0] is not W_GRID[0] and best[1] > prior_reward + W_SELECT_MARGIN:
+        print(f"    weights: prior {prior_reward:.4f} -> selected {best[1]:.4f} "
+              f"(+{best[1]-prior_reward:.4f} > {W_SELECT_MARGIN})", flush=True)
+        return dict(best[0])
+    print(f"    weights: keeping prior ({prior_reward:.4f}); best rival {best[1]:.4f} "
+          f"did not clear {W_SELECT_MARGIN}", flush=True)
+    return dict(W_GRID[0])
 
 
 def remap_to_threshold(p, t):
@@ -261,18 +411,44 @@ def main():
     by = load_sanitized()
     PH, V2, y, dates, cols_ph, cols_v2 = featurize(by)
     unique_dates = sorted(set(dates))
+
+    # PILLAR 2 — measured live-OOD ablation from the captures: zero the
+    # structurally out-of-distribution columns in BOTH views, in train and (via
+    # the stored masks) serve, so no member can rank live chunks on them.
+    print("measuring live-OOD from captures...", flush=True)
+    mask_ph, mask_v2 = compute_ood_masks(cols_ph, cols_v2)
+    PH = PH.copy(); PH[:, mask_ph] = 0.0
+    V2 = V2.copy(); V2[:, mask_v2] = 0.0
+
     holdout_dates = unique_dates[-HOLDOUT_DAYS:]
     train_rows = np.flatnonzero(~np.isin(dates, holdout_dates))
     hold_rows = np.flatnonzero(np.isin(dates, holdout_dates))
     print(f"{len(y)} chunks, {len(unique_dates)} dates | holdout {holdout_dates} "
           f"({hold_rows.size} chunks)", flush=True)
 
-    print("fitting pre-holdout D0Draco...", flush=True)
-    ens_h = fit_draco(PH, V2, y, dates, train_rows, cols_ph, cols_v2)
+    # PILLAR 4 / weight control — walk-forward member OOF, then select blend
+    # weights on live-realistic windows scored exactly as they serve.
+    print(f"walk-forward member OOF over last {WF_DATES} dates...", flush=True)
+    wf_dates = unique_dates[-WF_DATES:]
+    oof_parts = {p: np.full(len(y), np.nan) for p in PARTS}
+    for td in wf_dates:
+        tr = np.flatnonzero(dates < td)
+        te = np.flatnonzero(dates == td)
+        if tr.size < 60 or len(set(y[tr])) < 2:
+            continue
+        members = fit_members(PH, V2, y, dates, tr, verbose=False)
+        probs = member_probs(members, PH, V2, te)
+        for p in PARTS:
+            oof_parts[p][te] = probs[p]
+        print(f"  wf {td} (train={tr.size} test={te.size})", flush=True)
+    covered = np.flatnonzero(~np.isnan(oof_parts["stack"]))
+    y_oof = y[covered]
+    oof_cov = {p: oof_parts[p][covered] for p in PARTS}
+    print("selecting blend weights (walk-forward, live-geometry windows):", flush=True)
+    weights = select_weights(oof_cov, y_oof, covered)
 
-    # Deploy threshold: per-date rank-blend scores on the holdout, human
-    # quantile at 1 - TARGET_FPR (their conformal 4% target). Rank output is
-    # batch-relative, so score each date as its own request batch.
+    print("fitting pre-holdout D0Draco (selected weights)...", flush=True)
+    ens_h = fit_draco(PH, V2, y, dates, train_rows, cols_ph, cols_v2, weights)
     hold_scores = np.empty(hold_rows.size)
     for d in holdout_dates:
         m = dates[hold_rows] == d
@@ -280,23 +456,26 @@ def main():
         hold_scores[m] = ens_h.score(PH[idx], V2[idx])
     thr = float(np.quantile(hold_scores[y[hold_rows] == 0], 1 - TARGET_FPR))
     print(f"deploy threshold (human q{1-TARGET_FPR:.2f} on holdout): {thr:.4f}", flush=True)
-
     stats = window_rewards(ens_h, PH, V2, y, hold_rows, thr, seed=SEED)
     print(f"HOLDOUT reward @100-chunk {int(WINDOW_BOT_FRAC*100)}%-bot windows: "
           f"mean={stats['mean']:.4f} p10={stats['p10']:.4f} min={stats['minimum']:.4f} "
           f"zeros={stats['zeros']}/100", flush=True)
 
-    print("fitting FINAL D0Draco on all dates...", flush=True)
-    ens = fit_draco(PH, V2, y, dates, np.arange(len(y)), cols_ph, cols_v2)
+    print("fitting FINAL D0Draco on all dates (selected weights)...", flush=True)
+    ens = fit_draco(PH, V2, y, dates, np.arange(len(y)), cols_ph, cols_v2, weights)
 
     artifact = {
         "kind": "d0_draco",
         "ens": ens,
         "threshold": thr,
         "max_pos_frac": MAX_POS_FRAC,
-        "weights": dict(W),
+        "weights": dict(weights),
+        "weights_prior": dict(W_PRIOR),
         "cols_ph": cols_ph,
         "cols_v2": cols_v2,
+        "ood_mask_ph": mask_ph,
+        "ood_mask_v2": mask_v2,
+        "z_max": Z_MAX,
         "holdout_dates": holdout_dates,
         "holdout_window_rewards": stats,
         "target_fpr": TARGET_FPR,
@@ -309,7 +488,10 @@ def main():
     with out.open("wb") as fh:
         pickle.dump(artifact, fh, protocol=4)
     print(f"saved {out} ({out.stat().st_size/1e6:.1f} MB)")
-    report = {k: v for k, v in artifact.items() if k not in ("ens",)}
+    report = {k: (v.tolist() if isinstance(v, np.ndarray) else v)
+              for k, v in artifact.items() if k not in ("ens",)}
+    report["n_ood_ph"] = int(mask_ph.sum())
+    report["n_ood_v2"] = int(mask_v2.sum())
     (ART / "d0_train_report.json").write_text(json.dumps(report, indent=2, default=str))
     print("saved artifacts/d0_train_report.json")
 

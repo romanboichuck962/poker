@@ -74,7 +74,7 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-draco",
-                "model_version": "3",
+                "model_version": "4",
                 "framework": "d0-draco (adapted from UID172 poker44-benchmark-huge-2): weighted 4-member rank-blend {stack .28, mono .24, mlp .28, drse .20} on three feature views - a 56-leaf benchmark-supervised StackingClassifier (LGBM+XGBoost+CatBoost+ExtraTrees+RF -> LogisticRegression, cv4) and a 3-seed depth-5 sign-mined monotone XGBoost committee on the phasberg view (293 dims: 40 per-hand scalars x 7 order-stats + 12 replay-signature features + hand_count), a 4-seed PCA-44 MLP(64,32) committee on the v2+phasberg union, and a drift-robust subspace ensemble (n=8, feature-fraction 0.75, bagged ExtraTrees/HistGBM on random feature subspaces) on the hero-free sanitization-invariant v2 view (250 dims, validator bb-bucket-grid sizing); rank averaging is calibration-agnostic and only chunk ordering matters; serving applies a monotone deploy-threshold remap to 0.5 (threshold = holdout human quantile at 4% target FPR) plus a 16% batch safety budget, both rank-preserving; sanitized train==serve",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
@@ -85,7 +85,7 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-17 (including v1.13), "
+                    "2026-07-18 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
                     "training matches serving. See train_d0.py for training "
                     "(architecture adapted from UID172's public poker44-benchmark-huge-2)."
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v3: switched to UID172's D0Draco method (rank-blend of stack/mono/mlp/drse over phasberg+v2 views) after the UID176-style coherent port underperformed live; members built to UID172's published spec strings, trained on the full sanitized benchmark with a locked 2-date holdout evaluated on live-composition request windows.",
+                "notes": "uid242 v4: UID172 D0Draco retrained on benchmark through 2026-07-18 (54 releases) with weight control from both benchmark and captures - measured live-OOD ablation (phasberg 97/293, v2 81/250 columns z>5 vs 400 captured validator chunks zeroed in train and serve) plus walk-forward blend-weight selection on live-composition 100-chunk windows (kept UID172's prior {stack .28, mono .24, mlp .28, drse .20}, best rival did not clear margin). Ablation lifted live rank-agreement with the proven uid77 rocket from 0.49 to 0.64.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
