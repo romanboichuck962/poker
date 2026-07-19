@@ -1,23 +1,23 @@
 {
-  "cv_ap": 0.9519787039968368,
-  "cv_bot_recall": 0.7818791946308725,
+  "cv_ap": 0.9570580796705475,
+  "cv_bot_recall": 0.8013698630136986,
   "cv_fpr": 0.0,
-  "cv_reward": 0.9177563047881546,
+  "cv_reward": 0.9246726187966917,
   "cv_safety": 1.0,
-  "hard_bot_recall": 0.3187919463087248,
-  "n_dates": 54,
-  "positive_rate": 0.1593959731543624,
-  "selected": "rocket-p44r1: sklearn-stack+monotone-xgb+pca-mlp+drse/weighted-logit-fusion; weighted-logit fusion(stack 0.28 + mono 0.18 + mlp 0.32 + drse 0.22) of stack/mono on PH + mlp on UN + drse on V2; walk-forward weights; targetFPR=5%; remap+smart-minpos+16%cap; adapted from UID163 rocket-r2",
-  "trained_at": "2026-07-18T04:41:18.915881+00:00",
+  "hard_bot_recall": 0.3184931506849315,
+  "n_dates": 55,
+  "positive_rate": 0.15924657534246575,
+  "selected": "rocket-p44r1: sklearn-stack+monotone-xgb+pca-mlp+drse/weighted-logit-fusion; weighted-logit fusion(stack 0.22 + mono 0.10 + mlp 0.38 + drse 0.30) of stack/mono on PH + mlp on UN + drse on V2; walk-forward weights; targetFPR=5%; remap+smart-minpos+16%cap; adapted from UID163 rocket-r2",
+  "trained_at": "2026-07-19T06:36:38.936038+00:00",
   "walk_forward": [
     {
-      "cv_reward_prior": 0.9110148751742816,
-      "n_walkforward": 596,
+      "cv_reward_prior": 0.8991983611966324,
+      "n_walkforward": 584,
       "weights": {
-        "drse": 0.22,
-        "mlp": 0.32,
-        "mono": 0.18,
-        "stack": 0.28
+        "drse": 0.3,
+        "mlp": 0.38,
+        "mono": 0.1,
+        "stack": 0.22
       },
       "weights_prior": {
         "drse": 0.2,

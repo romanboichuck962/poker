@@ -26,7 +26,7 @@ from poker44.validator.payload_view import prepare_hand_for_miner  # noqa: E402
 
 CAP_DIR = Path("/root/poker/captures")
 DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
-OUT = Path("/root/poker/artifacts/live_z.npy")
+OUT = Path("/root/poker242/artifacts/live_z.npy")
 RNG = np.random.default_rng(20260718)
 
 

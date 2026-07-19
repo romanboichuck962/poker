@@ -74,8 +74,8 @@ class Miner(BaseMinerNeuron):
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
                 "model_name": "poker44-neptune-rocket",
-                "model_version": "5",
-                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 400 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); walk-forward-selected blend weights; sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
+                "model_version": "6",
+                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 500 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); blend weights chosen by a dense walk-forward simplex search on OUR reward(); sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -85,7 +85,7 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-18 (including v1.13), "
+                    "2026-07-19 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
                     "training matches serving. See deploy_rocket.py for training "
                     "(architecture adapted from UID163's rocket-r2) and promote gates."
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v5: switched from the UID172 D0Draco port to uid77's proven UID163 rocket-r2 method (stack+mono+mlp+drse weighted-logit fusion; walk-forward-selected blend weights stack 0.28, mono 0.18, mlp 0.32, drse 0.22; measured live-OOD z>5 ablation from 400 captured validator chunks; sanitized train; remap-to-0.5 + smart min-positive + batch positive-fraction cap). Same architecture and trained artifact as uid77's v22 (identical benchmark through 2026-07-18 and capture snapshot yield the identical deterministic rocket artifact); run as an independent second entry, validated by a live-capture serving smoke test.",
+                "notes": "uid242 v6: retrained the UID163 rocket-r2 four-component ensemble in this repo on benchmark through 2026-07-19 (55 releases) with OOD ablation from 500 captured validator chunks, then controlled the blend weights via a dense 946-point walk-forward simplex search scored on OUR reward() with per-candidate FPR-anchored thresholds. Selected weights (stack 0.22, mono 0.10, mlp 0.38, drse 0.30) give walk-forward reward 0.9247 / recall@5%fpr 0.801; promote-gated. Run as an independent second entry alongside uid77's rocket; functionally equivalent to uid77 v23 (Spearman 1.0 on captures) since it uses the same public benchmark and shared capture snapshot.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
