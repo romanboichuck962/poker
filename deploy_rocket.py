@@ -264,21 +264,30 @@ def served_scores(prob, threshold):
     return _apply_batch_safety_budget(_ensure_min_positives(recenter_scores(prob, threshold)), _MAX_POS_FRAC)
 
 
-def select_weights(oof_parts, y_oof, thr):
+def select_weights(oof_parts, y_oof, target_fpr):
     """Walk-forward-select blend weights from variant.W_GRID against OUR served
-    reward(); the prior keeps its seat unless a rival clears it by the margin."""
+    reward(); the prior keeps its seat unless a rival clears it by the margin.
+
+    Each candidate is scored with ITS OWN FPR-anchored threshold (the quantile
+    that will actually deploy for that blend), so the search optimises the true
+    gated reward rather than a single fixed probe threshold shared by every
+    blend. With the dense grid this is proper weight control."""
     prior = variant.W_PRIOR
     scored = []
     for cand in variant.W_GRID:
         p = blend(oof_parts, cand)
-        r, _ = reward(served_scores(p, thr), y_oof)
+        thr_c = float(np.quantile(p[y_oof == 0], 1 - target_fpr)) if np.any(y_oof == 0) else 0.5
+        r, _ = reward(served_scores(p, thr_c), y_oof)
         scored.append((float(r), cand))
     prior_reward = scored[0][0]
     best_reward, best = max(scored, key=lambda item: item[0])
 
-    for r, cand in scored:
-        tag = "prior" if cand is prior else "    "
-        print(f"    {tag} {{{', '.join(f'{k}:{cand[k]:.2f}' for k in PARTS)}}} reward={r:.4f}", flush=True)
+    # Grid is now dense (hundreds of points); print the incumbent + the top rivals.
+    print(f"    prior {{{', '.join(f'{k}:{prior[k]:.2f}' for k in PARTS)}}} reward={prior_reward:.4f}", flush=True)
+    for r, cand in sorted(scored, key=lambda it: -it[0])[:8]:
+        if cand is prior:
+            continue
+        print(f"    top   {{{', '.join(f'{k}:{cand[k]:.2f}' for k in PARTS)}}} reward={r:.4f}", flush=True)
 
     if best is not prior and best_reward > prior_reward + variant.W_SELECT_MARGIN:
         print(f"    weights: prior {prior_reward:.4f} -> selected {best_reward:.4f} "
@@ -352,7 +361,7 @@ def main() -> None:
     thr_probe = float(np.quantile(prior_probe[y_oof == 0], 1 - TARGET_FPR)) if np.any(y_oof == 0) else 0.5
 
     print("selecting blend weights (walk-forward, scored on OUR reward()):", flush=True)
-    weights, _, prior_reward = select_weights(pooled, y_oof, thr_probe)
+    weights, _, prior_reward = select_weights(pooled, y_oof, TARGET_FPR)
 
     oof_prob = blend(pooled, weights)
     thr = float(np.quantile(oof_prob[y_oof == 0], 1 - TARGET_FPR)) if np.any(y_oof == 0) else 0.5

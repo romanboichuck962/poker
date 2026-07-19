@@ -35,15 +35,33 @@ SUMMARY = (
 
 # --- blend weights (UID163's published prior; re-selected by walk-forward) -- #
 W_PRIOR = {"stack": 0.30, "mono": 0.22, "mlp": 0.28, "drse": 0.20}
-W_GRID = [
-    W_PRIOR,
-    {"stack": 0.30, "mono": 0.20, "mlp": 0.30, "drse": 0.20},
-    {"stack": 0.34, "mono": 0.24, "mlp": 0.26, "drse": 0.16},
-    {"stack": 0.28, "mono": 0.18, "mlp": 0.32, "drse": 0.22},
-    {"stack": 0.32, "mono": 0.26, "mlp": 0.24, "drse": 0.18},
-    {"stack": 0.26, "mono": 0.22, "mlp": 0.30, "drse": 0.22},
-    {"stack": 0.36, "mono": 0.20, "mlp": 0.28, "drse": 0.16},
-]
+
+
+def _gen_grid(step=0.02):
+    """Dense simplex grid over the four component weights (sum==1). deploy_rocket
+    scores EVERY candidate against OUR reward() with its own FPR-anchored
+    threshold, so this replaces the old 7 hand-picked points with a fine sweep
+    of the sensible region around UID163's prior — proper weight control rather
+    than a spot check. Ranges bracket the prior generously; drse is derived so
+    the four always sum to 1.0."""
+    def rng(lo, hi):
+        n = int(round((hi - lo) / step))
+        return [round(lo + i * step, 2) for i in range(n + 1)]
+
+    grid = []
+    for s in rng(0.20, 0.40):
+        for mo in rng(0.10, 0.30):
+            for ml in rng(0.20, 0.42):
+                d = round(1.0 - s - mo - ml, 2)
+                if 0.10 <= d <= 0.30:
+                    grid.append({"stack": s, "mono": mo, "mlp": ml, "drse": d})
+    return grid
+
+
+# Prior first (select_weights treats scored[0] as the incumbent), then the
+# de-duplicated dense sweep.
+W_GRID = [W_PRIOR] + [w for w in _gen_grid() if w != W_PRIOR]
+
 # Reward gain required before abandoning the prior; the walk-forward pool is
 # only a few dates deep, so a hair's-breadth win is noise, not evidence.
 W_SELECT_MARGIN = 0.002
