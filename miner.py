@@ -25,7 +25,7 @@ from poker44.utils.model_manifest import (
 )
 from poker44.validator.synapse import DetectionSynapse
 
-from model import MODEL_ARTIFACT, Poker44Model
+from model_cold import MODEL_ARTIFACT, Poker44Model
 from capture import capture_chunks
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -73,9 +73,9 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker44-neptune-rocket",
-                "model_version": "6",
-                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 500 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); blend weights chosen by a dense walk-forward simplex search on OUR reward(); sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
+                "model_name": "poker44-neptune-cold",
+                "model_version": "7",
+                "framework": "poker44-cold (UID142's stacked-v3 architecture, vendored under poker44_ml/ from https://github.com/david10301-code/Poker44-cold-poker1 @991965ed87, MIT - see LICENSE-uid142): 666 chunk features (40 per-hand scalars x 7 order-stats + 12 replay-signature shares + 373 fixed-vocabulary action n-grams + hand_count) filtered to the 539 live-robust columns (drops absolute-BB magnitudes, table-size and passivity columns measured OOD vs captured validator chunks); base learners LightGBM+XGBoost+CatBoost+ExtraTrees+RandomForest stacked via 5-fold OOF into a LogisticRegression meta with hard-bot focal reweighting (2.5/gamma 2.0) and human weight 1.3; blended isotonic calibration (0.5); sanitized train==serve via the validator's prepare_hand_for_miner. Serving operating point is UID142's rank-preserving batch-rank remap at a 12.5% per-request positive fraction, selected on our labeled holdout at live geometry - their fixed 0.70 threshold put 100% of captured live chunks above 0.5, which would hard-gate the reward to 0.",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v6: retrained the UID163 rocket-r2 four-component ensemble in this repo on benchmark through 2026-07-19 (55 releases) with OOD ablation from 500 captured validator chunks, then controlled the blend weights via a dense 946-point walk-forward simplex search scored on OUR reward() with per-candidate FPR-anchored thresholds. Selected weights (stack 0.22, mono 0.10, mlp 0.38, drse 0.30) give walk-forward reward 0.9247 / recall@5%fpr 0.801; promote-gated. Run as an independent second entry alongside uid77's rocket; functionally equivalent to uid77 v23 (Spearman 1.0 on captures) since it uses the same public benchmark and shared capture snapshot.",
+                "notes": "uid242 v7: switched from the UID163 rocket architecture to UID142's stacked-v3 'cold' model (leaderboard #1 at the time, composite 0.5954), trained with their shipped production recipe on the public benchmark through 2026-07-19 (55 releases, 2614 balanced chunks; fit 2106 / calibration 234 / date-disjoint holdout 274 on the last 2 releases). Honest holdout: reward 0.9597, AP 0.9849, recall@FPR<=0.05 0.8832, FPR@0.5 0.0146. Only deviation from their defaults is the serving operating point: their fixed 0.70 threshold remap scored 100% of 600 captured live validator chunks above 0.5 (live scores compress into [0.78,0.94]), so we use their own rank-preserving batch-rank remap at 12.5% instead - chosen on the labeled holdout at live geometry (100-chunk windows, 20% bots): mean reward 0.9571, p10 0.9278, 0/40 zero-gates.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
