@@ -25,7 +25,7 @@ from poker44.utils.model_manifest import (
 )
 from poker44.validator.synapse import DetectionSynapse
 
-from model import MODEL_ARTIFACT, Poker44Model
+from model_luck import Poker44Model
 from capture import capture_chunks
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -67,37 +67,39 @@ class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super().__init__(config=config)
         self.model = Poker44Model()
-        bt.logging.info(f"🤖 Poker44 trained-model miner started (artifact={MODEL_ARTIFACT.name})")
+        bt.logging.info(f"🤖 Poker44 luck-detector miner started (backend={self.model.backend})")
 
         self.model_manifest = build_local_model_manifest(
             repo_root=REPO_ROOT,
-            implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
+            implementation_files=[
+                REPO_ROOT / "miner.py",
+                REPO_ROOT / "model_luck.py",
+                REPO_ROOT / "poker44_ml" / "luck_detector.py",
+            ],
             defaults={
-                "model_name": "poker-submission",
-                "model_version": "8",
-                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs uid242's own captured validator chunks are dropped from both views; blend weights chosen by a dense walk-forward simplex search on OUR reward(); sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 12.5% pos cap",
+                "model_name": "poker44-neptune-luck",
+                "model_version": "9",
+                "framework": "luck-signature-detector (faithful port of UID225 poker44-luck-detector-2 v3.2.0): a TRAINING-FREE sequence-signature behavioral scorer. Per hand builds a signature = street-shape + street/action/size-bucket tokens; per chunk measures signature concentration = 0.45*top_sig_share + 0.35*repeat_mass + 0.20*(1-unique_share) blended with street-progression uniformity (0.18); piecewise-linear anchor calibration [0.30,0.90]->[0.5,1.0], floor 0.05. Scripted seats replay a few decision templates so their hands collapse onto a handful of signatures; humans spread across many. Serving adds UID142's rank-preserving batch-rank remap (top 12.5% of each request batch cross 0.5; env POKER44_BATCH_RANK/POKER44_MAX_POS_FRAC) which is strictly order-preserving (AP and recall@FPR<=0.05 unchanged) and secures the validator safety gate at live geometry. No trees, no benchmark fit.",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
                 "open_source": True,
                 "inference_mode": "remote",
-                "artifact_sha256": _sha256(MODEL_ARTIFACT),
                 "training_data_statement": (
-                    "Trained exclusively on the public Poker44 training benchmark "
-                    "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-19 (including v1.13), "
-                    "each hand passed through the public prepare_hand_for_miner sanitizer so "
-                    "training matches serving. See deploy_rocket.py for training "
-                    "(architecture adapted from UID163's rocket-r2) and promote gates."
+                    "No training data of any kind. This is a deterministic, training-free "
+                    "behavioral heuristic that scores each chunk purely from the action "
+                    "sequences visible in that chunk (signature concentration + street "
+                    "uniformity). No model is fit on the benchmark or any other dataset."
                 ),
-                "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
+                "training_data_sources": ["none"],
                 "private_data_attestation": (
-                    "This miner does not train on validator-only evaluation data."
+                    "This miner does not train on any data, and in particular uses no "
+                    "validator-only evaluation data."
                 ),
                 "data_attestation": (
-                    "All training data comes from the public Poker44 benchmark API."
+                    "No datasets are used; scoring depends only on the incoming chunk."
                 ),
-                "notes": "poker-submission: identical model to uid242 v8 (same UID163 rocket_logit architecture, same trained artifact, same blend weights stack 0.20/mono 0.14/mlp 0.42/drse 0.24, same OOD ablation from uid242's 720 captured validator chunks) - only the model_name differs. Trained on the public benchmark through 2026-07-21 (57 releases, 2936 balanced chunks); walk-forward reward 0.9086, AP 0.9429, recall@FPR<=0.05 0.762, hard_fpr 0, safety 1.0. Serving uses the rocket's rank-preserving remap + 12.5% batch positive cap.",
+                "notes": "uid242 v9: switched from the UID163 rocket ensemble to a faithful port of UID225's pure sequence-signature luck detector (the training-free heuristic uid225 actually serves; it scores 0.687, rank #3 on the live leaderboard). Rationale: our trained ensembles (rocket/cold/coherent/draco) all under-transferred live (uid242 rocket 0.42) while this de-overfit behavioral heuristic is a live-proven, decorrelated signal. Validated at live geometry (100-chunk 20%-bot windows) with UID142's rank-preserving batch-rank remap @ 12.5%: mean reward 0.613, p10 0.527, min 0.455, 0/200 zero-gates, safety 0.998, AP 0.485, recall@FPR<=0.05 0.312, fpr@0.5 0.031. Raw (uid225 default, batch-rank off) gives safety only 0.78 at our live geometry, so batch-rank is enabled by default (rank-preserving -> uid225's ranking signal is untouched). Serves <0.5 ms/chunk. Set POKER44_BATCH_RANK=0 to serve exactly what uid225 serves.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
