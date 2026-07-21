@@ -24,7 +24,7 @@ sys.path.insert(0, "/root/POKER44-SUBNET-1")
 from model import FEATURE_NAMES, extract_group_features  # noqa: E402
 from poker44.validator.payload_view import prepare_hand_for_miner  # noqa: E402
 
-CAP_DIR = Path("/root/poker/captures")
+CAP_DIR = Path("/root/poker242/captures")
 DATA = Path("/root/POKER44-SUBNET-1/data/benchmark")
 OUT = Path("/root/poker242/artifacts/live_z.npy")
 RNG = np.random.default_rng(20260718)
