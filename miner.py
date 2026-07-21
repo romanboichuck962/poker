@@ -73,7 +73,7 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker-rocket",
+                "model_name": "poker-submission",
                 "model_version": "8",
                 "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs uid242's own captured validator chunks are dropped from both views; blend weights chosen by a dense walk-forward simplex search on OUR reward(); sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 12.5% pos cap",
                 "license": "MIT",
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "poker-rocket: identical model to uid242 v8 (same UID163 rocket_logit architecture, same trained artifact, same blend weights stack 0.20/mono 0.14/mlp 0.42/drse 0.24, same OOD ablation from uid242's 720 captured validator chunks) - only the model_name differs. Trained on the public benchmark through 2026-07-21 (57 releases, 2936 balanced chunks); walk-forward reward 0.9086, AP 0.9429, recall@FPR<=0.05 0.762, hard_fpr 0, safety 1.0. Serving uses the rocket's rank-preserving remap + 12.5% batch positive cap.",
+                "notes": "poker-submission: identical model to uid242 v8 (same UID163 rocket_logit architecture, same trained artifact, same blend weights stack 0.20/mono 0.14/mlp 0.42/drse 0.24, same OOD ablation from uid242's 720 captured validator chunks) - only the model_name differs. Trained on the public benchmark through 2026-07-21 (57 releases, 2936 balanced chunks); walk-forward reward 0.9086, AP 0.9429, recall@FPR<=0.05 0.762, hard_fpr 0, safety 1.0. Serving uses the rocket's rank-preserving remap + 12.5% batch positive cap.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
