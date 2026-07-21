@@ -73,9 +73,9 @@ class Miner(BaseMinerNeuron):
             repo_root=REPO_ROOT,
             implementation_files=[REPO_ROOT / "miner.py", REPO_ROOT / "model.py"],
             defaults={
-                "model_name": "poker44-neptune-rocket",
-                "model_version": "23",
-                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs 500 captured validator chunks are dropped from both views (live stacks pinned 100bb, pots ~5bb, 7-9 seats); blend weights chosen by a dense walk-forward simplex search on OUR reward(); sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 16% pos cap",
+                "model_name": "poker-rocket",
+                "model_version": "8",
+                "framework": "rocket-p44r1 (adapted from UID163 rocket-r2): weighted log-odds fusion of stack(LGBM+XGBoost+CatBoost+ExtraTrees+RF->LogisticRegression meta)+mono(monotone-XGBoost committee) on hero+behavioral features, mlp(PCA+MLP committee) on the feature union, drse(drift-robust subspace ensemble) on an enriched hero-free view (28 all-actor per-hand scalars x 7 order-stats + replay signatures + compression/LZ76/Vendi redundancy); measured live-OOD ablation: features with z>5 vs uid242's own captured validator chunks are dropped from both views; blend weights chosen by a dense walk-forward simplex search on OUR reward(); sanitized train; targetFPR=5% remap-to-0.5; smart min-positive; 12.5% pos cap",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -97,7 +97,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "v23: retrained the UID163 rocket-r2 four-component architecture on benchmark through 2026-07-19 (55 releases) with OOD ablation from 500 captured validator chunks, then re-controlled the blend weights via a dense 946-point walk-forward simplex search scored on OUR reward() with per-candidate FPR-anchored thresholds. Selected weights (stack 0.22, mono 0.10, mlp 0.38, drse 0.30) lift walk-forward reward 0.9178->0.9247 and recall@5%fpr 0.767->0.801 over the v22 blend (stack 0.28, mono 0.18, mlp 0.32, drse 0.22); promote-gated and cross-checked on captures (Spearman 0.952 vs v22, 12.4% flagged at budget).",
+                "notes": "poker-rocket: identical model to uid242 v8 (same UID163 rocket_logit architecture, same trained artifact, same blend weights stack 0.20/mono 0.14/mlp 0.42/drse 0.24, same OOD ablation from uid242's 720 captured validator chunks) - only the model_name differs. Trained on the public benchmark through 2026-07-21 (57 releases, 2936 balanced chunks); walk-forward reward 0.9086, AP 0.9429, recall@FPR<=0.05 0.762, hard_fpr 0, safety 1.0. Serving uses the rocket's rank-preserving remap + 12.5% batch positive cap.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
