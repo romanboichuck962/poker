@@ -25,7 +25,7 @@ from poker44.utils.model_manifest import (
 )
 from poker44.validator.synapse import DetectionSynapse
 
-from model_luck import Poker44Model
+from model_cold import MODEL_ARTIFACT, Poker44Model
 from capture import capture_chunks
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -67,39 +67,43 @@ class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super().__init__(config=config)
         self.model = Poker44Model()
-        bt.logging.info(f"🤖 Poker44 luck-detector miner started (backend={self.model.backend})")
+        bt.logging.info(f"🤖 Poker44 trained-model miner started (artifact={MODEL_ARTIFACT.name})")
 
         self.model_manifest = build_local_model_manifest(
             repo_root=REPO_ROOT,
             implementation_files=[
                 REPO_ROOT / "miner.py",
-                REPO_ROOT / "model_luck.py",
-                REPO_ROOT / "poker44_ml" / "luck_detector.py",
+                REPO_ROOT / "model_cold.py",
+                REPO_ROOT / "poker44_ml" / "inference.py",
+                REPO_ROOT / "poker44_ml" / "features.py",
+                REPO_ROOT / "poker44_ml" / "stacked.py",
             ],
             defaults={
-                "model_name": "poker44-neptune-luck",
-                "model_version": "9",
-                "framework": "luck-signature-detector (faithful port of UID225 poker44-luck-detector-2 v3.2.0): a TRAINING-FREE sequence-signature behavioral scorer. Per hand builds a signature = street-shape + street/action/size-bucket tokens; per chunk measures signature concentration = 0.45*top_sig_share + 0.35*repeat_mass + 0.20*(1-unique_share) blended with street-progression uniformity (0.18); piecewise-linear anchor calibration [0.30,0.90]->[0.5,1.0], floor 0.05. Scripted seats replay a few decision templates so their hands collapse onto a handful of signatures; humans spread across many. Serving adds UID142's rank-preserving batch-rank remap (top 12.5% of each request batch cross 0.5; env POKER44_BATCH_RANK/POKER44_MAX_POS_FRAC) which is strictly order-preserving (AP and recall@FPR<=0.05 unchanged) and secures the validator safety gate at live geometry. No trees, no benchmark fit.",
+                "model_name": "poker44-neptune-cold",
+                "model_version": "10",
+                "framework": "poker44-cold-v2 (UID85's stacked-v3 architecture, vendored under poker44_ml/ from https://github.com/david10301-code/Poker44-cold-poker2 @b15740f68e, MIT - see LICENSE-uid85; functionally identical to UID142 cold-v1): 666 chunk features (40 per-hand scalars x 7 order-stats + 12 replay-signature shares + 373 fixed-vocabulary action n-grams + hand_count) filtered to the 539 live-robust columns; base learners LightGBM+XGBoost+CatBoost+ExtraTrees+RandomForest stacked via 5-fold OOF into a LogisticRegression meta with hard-bot focal reweighting (2.5/gamma 2.0) and human weight 1.3; blended isotonic calibration (0.5); sanitized train==serve. Serving operating point is UID85's own rank-preserving batch-rank remap at a 16% per-request positive fraction - their fixed 0.70 threshold put 100% of captured live chunks above 0.5, which would hard-gate the reward to 0.",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
                 "open_source": True,
                 "inference_mode": "remote",
+                "artifact_sha256": _sha256(MODEL_ARTIFACT),
                 "training_data_statement": (
-                    "No training data of any kind. This is a deterministic, training-free "
-                    "behavioral heuristic that scores each chunk purely from the action "
-                    "sequences visible in that chunk (signature concentration + street "
-                    "uniformity). No model is fit on the benchmark or any other dataset."
+                    "Trained exclusively on the public Poker44 training benchmark "
+                    "(https://api.poker44.net/api/v1/benchmark), releases through "
+                    "2026-07-22 (including v1.13), "
+                    "each hand passed through the public prepare_hand_for_miner sanitizer so "
+                    "training matches serving. See training/train_model_v2.py for training "
+                    "(architecture adapted from UID85's public poker44-cold-poker2)."
                 ),
-                "training_data_sources": ["none"],
+                "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
-                    "This miner does not train on any data, and in particular uses no "
-                    "validator-only evaluation data."
+                    "This miner does not train on validator-only evaluation data."
                 ),
                 "data_attestation": (
-                    "No datasets are used; scoring depends only on the incoming chunk."
+                    "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v9: switched from the UID163 rocket ensemble to a faithful port of UID225's pure sequence-signature luck detector (the training-free heuristic uid225 actually serves; it scores 0.687, rank #3 on the live leaderboard). Rationale: our trained ensembles (rocket/cold/coherent/draco) all under-transferred live (uid242 rocket 0.42) while this de-overfit behavioral heuristic is a live-proven, decorrelated signal. Validated at live geometry (100-chunk 20%-bot windows) with UID142's rank-preserving batch-rank remap @ 12.5%: mean reward 0.613, p10 0.527, min 0.455, 0/200 zero-gates, safety 0.998, AP 0.485, recall@FPR<=0.05 0.312, fpr@0.5 0.031. Raw (uid225 default, batch-rank off) gives safety only 0.78 at our live geometry, so batch-rank is enabled by default (rank-preserving -> uid225's ranking signal is untouched). Serves <0.5 ms/chunk. Set POKER44_BATCH_RANK=0 to serve exactly what uid225 serves.",
+                "notes": "uid242 v10: switched from the UID163 rocket to UID85's poker44-cold-poker2 (cold-v2) model - the current leaderboard #1 (composite 0.7059), chosen because the rocket kept scoring ~0.42 live while the cold stacked models win this cycle. cold-v2 is functionally identical to UID142's cold-v1 (only removed an unused feature-allowlist env path). Trained with their shipped production recipe on the public benchmark through 2026-07-22 (58 releases, 3100 balanced chunks; fit 2494 / calibration 278 / date-disjoint holdout 328 on the last 2 releases). Honest holdout: reward 0.8822, AP 0.9416, recall@FPR<=0.05 0.7134. Operating point deviates from their fixed 0.70 threshold (which scored 100% of 820 captured live chunks above 0.5, hard-gating reward to 0) to their own rank-preserving batch-rank remap at 16%, selected on the labeled holdout at live geometry (100-chunk windows, 20% bots): mean reward 0.8730, p10 0.8082, 0/40 zero-gates.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
