@@ -12,3 +12,6 @@ artifacts/v4_features.npz
 *.log
 artifacts/d0_features.npz
 artifacts/*_backup.*
+
+# staged/backup cold artifacts (serving artifact is poker44_cold.joblib)
+artifacts/poker44_cold_v*.joblib
