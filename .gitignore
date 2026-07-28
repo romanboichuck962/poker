@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 captures/
+
+# backup artifacts (not served)
+artifacts/*_backup.joblib
