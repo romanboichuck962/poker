@@ -80,7 +80,7 @@ class Miner(BaseMinerNeuron):
             ],
             defaults={
                 "model_name": "poker44-neptune-cold",
-                "model_version": "12",
+                "model_version": "13",
                 "framework": "poker44-cold-v1 (UID142's stacked-v3 architecture, vendored under poker44_ml/ from https://github.com/david10301-code/Poker44-cold-poker1 @9c605deb35, MIT - see LICENSE-uid85): 666 chunk features (40 per-hand scalars x 7 order-stats + 12 replay-signature shares + 373 fixed-vocabulary action n-grams + hand_count); base learners LightGBM+XGBoost+CatBoost+ExtraTrees+RandomForest stacked via 5-fold OOF into a LogisticRegression meta with hard-bot focal reweighting (2.5/gamma 2.0) and human weight 1.3; blended isotonic calibration (0.5); sanitized train==serve. KEY DIFFERENCE vs upstream: instead of their hardcoded robust-feature blocklist (measured on their captures from 2026-07-06/07), the feature set is re-derived from OUR OWN 1020 captured live validator chunks via their z-score method (z=|mean_live-mean_bench|/std_bench over size-matched pooled benchmark chunks, keep z<=5) and supplied through cold-v1's ROBUST_KEEP_ONLY_FILE hook -> 496/666 columns. Serving operating point is the rank-preserving batch-rank remap at a 16% per-request positive fraction; the upstream fixed 0.70 threshold puts ~100% of captured live chunks above 0.5, which would hard-gate the reward to 0.",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
@@ -91,7 +91,7 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-22 (including v1.13), "
+                    "2026-07-28 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
                     "training matches serving. See training/train_model_v2.py for training "
                     "(architecture adapted from UID85's public poker44-cold-poker2)."
@@ -103,7 +103,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v12: cold-v1 retrained on the public benchmark through 2026-07-25 (61 releases, 3556 balanced chunks; fit 2908 / calibration 324 / date-disjoint holdout 324 on the last 2 releases), feature set re-derived from our own 1120 live captures via the z-score method (keep z<=5 -> 496/666 columns) through cold-v1's ROBUST_KEEP_ONLY_FILE hook. Honest holdout: reward 0.9494, AP 0.9719, recall@FPR<=0.05 0.8642 (raw_separation_q90_q10 +0.13, up from v11's -0.31). CAVEAT recorded for future analysis: relative to the prior v11 artifact this improves the benchmark holdout (0.8783->0.9494) but the live-capture score spread re-compressed (std 0.063->0.039) - the two signals point opposite ways, and benchmark reward has never tracked live for this miner, so the live benefit is unproven. Serving: batch-rank remap at 12.5% (best on the labeled holdout at live geometry, mean reward 0.9366), empty chunk -> 0.1.",
+                "notes": "uid242 v13: cold-v1 retrained on the public benchmark through 2026-07-28 (64 releases) with the live-robust feature allowlist refreshed from our own 1420 captured validator chunks (z<=5 -> 493/666 columns). Honest holdout: reward 0.9316, AP 0.9748, recall@FPR<=0.05 0.8013. Serving: rank-preserving batch-rank remap at 12.5% (a labeled-holdout fraction sweep 0.10-0.30 was flat at 0.916-0.927, giving no reason to change from the 12.5% that scored 0.521 live in R2), empty chunk -> 0.1. DIAGNOSIS ON RECORD: uid242 R1 0.393 -> R2 0.521; the ~0.10 gap to top miners (~0.62) is live AP+bot_recall (65% of reward) which benchmark-trained ranking does not transfer - the benchmark cannot distinguish operating points, so cold is near its live ceiling (~0.52). Live round data also DISPROVED the 'live spread predicts score' thesis: artos (uid167) had the best live spread (std 0.24) but scored worst (0.325), while more-compressed cold/super_poker scored best.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
