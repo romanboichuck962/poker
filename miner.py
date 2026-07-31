@@ -1,4 +1,4 @@
-"""Poker44 miner serving UID237's training-free M3-GB luck detector.
+"""Poker44 miner serving UID148's training-free S1-RW luck detector.
 
 Falls back to a neutral 0.5 score for any chunk the model fails to score.
 Run with the Poker44-subnet package installed (pip install -e Poker44-subnet).
@@ -70,7 +70,7 @@ class Miner(BaseMinerNeuron):
         super().__init__(config=config)
         self.model = Poker44Model()
         bt.logging.info(
-            f"🤖 Poker44 jet M3-GB miner started (backend={getattr(self.model, 'backend', 'luck')})"
+            f"🤖 Poker44 S1-RW miner started (backend={getattr(self.model, 'backend', 'luck')})"
         )
 
         self.model_manifest = build_local_model_manifest(
@@ -81,18 +81,16 @@ class Miner(BaseMinerNeuron):
                 REPO_ROOT / "poker44_ml" / "luck_detector.py",
             ],
             defaults={
-                "model_name": os.getenv("POKER44_MODEL_NAME", "jet-markovpot-gb-detector-3"),
-                "model_version": os.getenv("POKER44_MODEL_VERSION", "3.7.3"),
+                "model_name": os.getenv("POKER44_MODEL_NAME", "code-seqsig-rw-detector-1"),
+                "model_version": os.getenv("POKER44_MODEL_VERSION", "3.3.1"),
                 "framework": (
-                    "markov-pot-geometry-gb / M3-GB (UID237 jet-detector-3 @2df44d27, "
-                    "MIT - see LICENSE-uid237 / ATTRIBUTION-uid237.md): training-free "
-                    "chunk scorer combining Markov action-transition entropy deficit, "
-                    "pot bet/pot CV regularity, signature concentration, and street "
-                    "uniformity via weighted geometric blend + smoothstep anchors "
-                    "[0.24, 0.80]. No joblib artifact. Serving adds rank-preserving "
-                    "batch-rank remap (POKER44_BATCH_RANK) at POKER44_MAX_POS_FRAC so "
-                    "the live validator threshold_sanity gate stays safe without "
-                    "changing ranking."
+                    "sequence-signature-sd-rw / S1-RW (UID148 code-seqsig-rw-detector-1 "
+                    "@5c5aaf34, MIT - see LICENSE-uid148 / ATTRIBUTION-uid148.md): "
+                    "training-free chunk scorer — signature concentration (top-1/top-2/"
+                    "repeat-mass) + street uniformity + winsorized voluntary-size CV "
+                    "deficit; piecewise-linear anchors [0.29, 0.88]. No joblib artifact. "
+                    "Serving adds rank-preserving batch-rank remap (POKER44_BATCH_RANK) "
+                    "at POKER44_MAX_POS_FRAC."
                 ),
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
@@ -101,7 +99,7 @@ class Miner(BaseMinerNeuron):
                 "inference_mode": "remote",
                 "artifact_sha256": _sha256(MODEL_ARTIFACT),
                 "training_data_statement": (
-                    "Training-free heuristic (UID237 M3-GB). Operating point "
+                    "Training-free heuristic (UID148 S1-RW). Operating point "
                     "(POKER44_MAX_POS_FRAC) calibrated on the public Poker44 "
                     "training benchmark (https://api.poker44.net/api/v1/benchmark) "
                     "releases through 2026-07-31 plus unlabeled live captures for "
@@ -115,12 +113,10 @@ class Miner(BaseMinerNeuron):
                     "Heuristic scoring; calibration uses the public Poker44 benchmark API."
                 ),
                 "notes": (
-                    "uid242: switched from cold-v14 to UID237's jet-markovpot-gb-detector-3 "
-                    "(M3-GB @2df44d27). Training-free; anchors kept at upstream 0.24/0.80. "
-                    "Holdout 07-30/31 (n=304): raw AP 0.735, raw reward 0.455 (tsq-limited); "
-                    "batch-rank@0.125 window mean ~0.58. Captures (n=1740): raw med 0.35, "
-                    "std 0.09, ~10% >=0.5 — rank-map required. Prevalence sweep keeps "
-                    "POKER44_MAX_POS_FRAC=0.125 (40/40 capture windows have >=1 positive)."
+                    "uid242: switched from UID237 M3-GB to UID148 code-seqsig-rw-detector-1 "
+                    "(S1-RW @5c5aaf34). Holdout 07-30/31 (n=304): raw AP 0.783, raw reward 0.672; "
+                    "batch-rank@0.125 window mean ~0.615. Captures (n=1740): raw med 0.47, "
+                    "26% >=0.5. POKER44_MAX_POS_FRAC=0.125."
                 ),
             },
         )
