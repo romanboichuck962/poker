@@ -91,7 +91,7 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-28 (including v1.13), "
+                    "2026-07-31 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
                     "training matches serving. Architecture adapted from UID254's public "
                     "super_poker_3 (see super_poker/train.py)."
@@ -103,7 +103,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid113 v2: super_poker retrained on the latest benchmark through 2026-07-28 (64 releases; walk-forward reward 0.8998, AP 0.9390, recall 0.737) AND the operating point hardened from a FIXED threshold to a within-batch RANK map at 12.5%. Context: uid113 was our best slot at 0.549 (R2) - its 12.5% operating point was already zero-gate-safe (unlike uid167/artos which zero-gated at 7% and scored 0.325). So the model was near-optimal; the only real improvement available was robustness. The v1 fixed threshold (0.7545, capture-calibrated) drifts as the live distribution shifts; v2's rank map guarantees exactly 12.5% every batch immune to drift and can never zero-gate (verified 0/40 windows). Ranking is identical to v1, so AP/recall (65% of reward) are unchanged - this only removes the drift/zero-gate tail risk that could otherwise erode the 0.549.",
+                "notes": "uid113 v2: super_poker retrained on the latest benchmark through 2026-07-31 (67 releases; walk-forward reward 0.9045, AP 0.9446, hard_bot_recall 0.653 on 07-27..31). Operating point remains within-batch RANK map at 12.5% (POKER44_MAX_POS_FRAC): holdout prevalence sweep was flat for 0.05-0.13 with zero gates, but 12.5% is kept from live-proven R2 (0.549) rather than naive smallest-tie 0.05 (uid167 zero-gated near 7%). Capture check on 520 live chunks: 40/40 rank-map windows have >=1 positive; capture quantile @12.5%=0.7469 vs artifact deploy thr=0.7367.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

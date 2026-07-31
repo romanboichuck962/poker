@@ -1,0 +1,144 @@
+{
+  "selected_pos_frac": 0.05,
+  "selected_metrics": {
+    "fraction": 0.05,
+    "reward_min": 0.838048186464405,
+    "reward_mean": 0.9083264920089947,
+    "zero_gate_rate": 0.0,
+    "fpr_max": 0.030612244897959183,
+    "worst_p": 0.1,
+    "by_p": {
+      "0.5": 0.9419,
+      "0.2": 0.8766,
+      "0.1": 0.838,
+      "0.05": 0.8851,
+      "0.02": 1.0
+    }
+  },
+  "grid": [
+    {
+      "fraction": 0.05,
+      "reward_min": 0.838048186464405,
+      "reward_mean": 0.9083264920089947,
+      "zero_gate_rate": 0.0,
+      "fpr_max": 0.030612244897959183,
+      "worst_p": 0.1,
+      "by_p": {
+        "0.5": 0.9419,
+        "0.2": 0.8766,
+        "0.1": 0.838,
+        "0.05": 0.8851,
+        "0.02": 1.0
+      }
+    },
+    {
+      "fraction": 0.07,
+      "reward_min": 0.838048186464405,
+      "reward_mean": 0.9083264920089947,
+      "zero_gate_rate": 0.0,
+      "fpr_max": 0.05102040816326531,
+      "worst_p": 0.1,
+      "by_p": {
+        "0.5": 0.9419,
+        "0.2": 0.8766,
+        "0.1": 0.838,
+        "0.05": 0.8851,
+        "0.02": 1.0
+      }
+    },
+    {
+      "fraction": 0.1,
+      "reward_min": 0.838048186464405,
+      "reward_mean": 0.9083264920089947,
+      "zero_gate_rate": 0.0,
+      "fpr_max": 0.08163265306122448,
+      "worst_p": 0.1,
+      "by_p": {
+        "0.5": 0.9419,
+        "0.2": 0.8766,
+        "0.1": 0.838,
+        "0.05": 0.8851,
+        "0.02": 1.0
+      }
+    },
+    {
+      "fraction": 0.125,
+      "reward_min": 0.838048186464405,
+      "reward_mean": 0.9076763470712944,
+      "zero_gate_rate": 0.0,
+      "fpr_max": 0.11224489795918367,
+      "worst_p": 0.1,
+      "by_p": {
+        "0.5": 0.9419,
+        "0.2": 0.8766,
+        "0.1": 0.838,
+        "0.05": 0.8844,
+        "0.02": 0.9974
+      }
+    },
+    {
+      "fraction": 0.13,
+      "reward_min": 0.838048186464405,
+      "reward_mean": 0.9076763470712944,
+      "zero_gate_rate": 0.0,
+      "fpr_max": 0.11224489795918367,
+      "worst_p": 0.1,
+      "by_p": {
+        "0.5": 0.9419,
+        "0.2": 0.8766,
+        "0.1": 0.838,
+        "0.05": 0.8844,
+        "0.02": 0.9974
+      }
+    },
+    {
+      "fraction": 0.16,
+      "reward_min": 0.838048186464405,
+      "reward_mean": 0.9045833444063109,
+      "zero_gate_rate": 0.0,
+      "fpr_max": 0.14285714285714285,
+      "worst_p": 0.1,
+      "by_p": {
+        "0.5": 0.9419,
+        "0.2": 0.8766,
+        "0.1": 0.838,
+        "0.05": 0.8792,
+        "0.02": 0.9872
+      }
+    },
+    {
+      "fraction": 0.2,
+      "reward_min": 0.8296633378548375,
+      "reward_mean": 0.8974055595368832,
+      "zero_gate_rate": 0.0,
+      "fpr_max": 0.1836734693877551,
+      "worst_p": 0.1,
+      "by_p": {
+        "0.5": 0.9419,
+        "0.2": 0.8766,
+        "0.1": 0.8297,
+        "0.05": 0.8654,
+        "0.02": 0.9735
+      }
+    }
+  ],
+  "holdout_dates": [
+    "2026-07-29",
+    "2026-07-30",
+    "2026-07-31"
+  ],
+  "deployment_threshold_artifact": 0.7366768598556519,
+  "capture_calibrated_threshold_at_selected": 0.8048336500000001,
+  "n_captures": 520,
+  "holdout_n": 460,
+  "walk_forward_hint": "see artifacts/super_poker_3.metrics.json",
+  "applied_pos_frac": 0.125,
+  "applied": {
+    "pos_frac": 0.125,
+    "reason": "Holdout prevalence sweep on 2026-07-29..31 was flat reward_min=0.838 for frac in {0.05,0.07,0.10,0.125,0.13} with zero_gate_rate=0. Naive smallest-tie picks 0.05, but live history (uid167 zero-gated near 7%) and uid113 R2 success at 12.5% keep POKER44_MAX_POS_FRAC=0.125. Capture check on 520 live chunks: 40/40 rank-map windows have >=1 positive; capture quantile threshold @12.5%=0.7469 (artifact deploy thr=0.7367).",
+    "capture_calibrated_threshold_at_0125": 0.7469,
+    "artifact_deployment_threshold": 0.7367,
+    "env": "POKER44_MAX_POS_FRAC=0.125 in run_miner_new2.sh (unchanged)",
+    "n_captures": 520
+  }
+}
