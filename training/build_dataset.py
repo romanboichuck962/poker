@@ -31,6 +31,9 @@ def resolve_benchmark_paths(path: str | Path | None) -> list[Path]:
             candidate = Path(raw)
             if candidate.is_dir():
                 paths = sorted(candidate.glob("training_benchmark*.txt"))
+                if not paths:
+                    # Flat public API cache: data/benchmark/<YYYY-MM-DD>.json
+                    paths = sorted(candidate.glob("*.json"))
             else:
                 paths = [candidate]
     else:

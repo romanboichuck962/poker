@@ -1,6 +1,6 @@
 # live-robust cold feature allowlist
 # z = |mean_live-mean_bench|/std_bench <= 5.0
-# live=1420 captures, bench=400 pooled @ 89 hands
+# live=1740 captures, bench=400 pooled @ 90 hands
 schema_action_count_max
 schema_action_count_mean
 schema_action_count_q10
@@ -25,7 +25,6 @@ schema_actor_entropy_q50
 schema_actor_entropy_std
 schema_actor_run_max_share_max
 schema_actor_run_max_share_mean
-schema_actor_run_max_share_min
 schema_actor_run_max_share_q10
 schema_actor_run_max_share_q50
 schema_actor_run_max_share_q90
@@ -42,8 +41,10 @@ schema_aggression_share_std
 schema_amount_bucket_signature_top_share
 schema_amount_bucket_signature_unique_share
 schema_amount_max_bb_q10
+schema_amount_mean_bb_max
 schema_amount_mean_bb_q10
 schema_amount_mean_bb_q50
+schema_amount_mean_bb_q90
 schema_amount_q90_bb_q10
 schema_amount_std_bb_q10
 schema_bet_share_max
@@ -432,6 +433,7 @@ schema_nonzero_amount_share_std
 schema_passive_share_max
 schema_passive_share_q90
 schema_passive_share_std
+schema_player_count_mean
 schema_player_count_min
 schema_player_count_q10
 schema_player_count_q50
@@ -477,6 +479,7 @@ schema_starting_stack_iqr_bb_std
 schema_starting_stack_mean_bb_min
 schema_starting_stack_mean_bb_std
 schema_starting_stack_std_bb_mean
+schema_starting_stack_std_bb_min
 schema_starting_stack_std_bb_q10
 schema_starting_stack_std_bb_q90
 schema_street_count_mean

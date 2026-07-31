@@ -80,8 +80,8 @@ class Miner(BaseMinerNeuron):
             ],
             defaults={
                 "model_name": "poker44-neptune-cold",
-                "model_version": "13",
-                "framework": "poker44-cold-v1 (UID142's stacked-v3 architecture, vendored under poker44_ml/ from https://github.com/david10301-code/Poker44-cold-poker1 @9c605deb35, MIT - see LICENSE-uid85): 666 chunk features (40 per-hand scalars x 7 order-stats + 12 replay-signature shares + 373 fixed-vocabulary action n-grams + hand_count); base learners LightGBM+XGBoost+CatBoost+ExtraTrees+RandomForest stacked via 5-fold OOF into a LogisticRegression meta with hard-bot focal reweighting (2.5/gamma 2.0) and human weight 1.3; blended isotonic calibration (0.5); sanitized train==serve. KEY DIFFERENCE vs upstream: instead of their hardcoded robust-feature blocklist (measured on their captures from 2026-07-06/07), the feature set is re-derived from OUR OWN 1020 captured live validator chunks via their z-score method (z=|mean_live-mean_bench|/std_bench over size-matched pooled benchmark chunks, keep z<=5) and supplied through cold-v1's ROBUST_KEEP_ONLY_FILE hook -> 496/666 columns. Serving operating point is the rank-preserving batch-rank remap at a 16% per-request positive fraction; the upstream fixed 0.70 threshold puts ~100% of captured live chunks above 0.5, which would hard-gate the reward to 0.",
+                "model_version": "14",
+                "framework": "poker44-cold-v1 (UID142's stacked-v3 architecture, vendored under poker44_ml/ from https://github.com/david10301-code/Poker44-cold-poker1 @9c605deb35, MIT - see LICENSE-uid85): 666 chunk features (40 per-hand scalars x 7 order-stats + 12 replay-signature shares + 373 fixed-vocabulary action n-grams + hand_count); base learners LightGBM+XGBoost+CatBoost+ExtraTrees+RandomForest stacked via 5-fold OOF into a LogisticRegression meta with hard-bot focal reweighting (2.5/gamma 2.0) and human weight 1.3; blended isotonic calibration (0.5); sanitized train==serve. KEY DIFFERENCE vs upstream: instead of their hardcoded robust-feature blocklist (measured on their captures from 2026-07-06/07), the feature set is re-derived from OUR OWN captured live validator chunks via their z-score method (z=|mean_live-mean_bench|/std_bench over size-matched pooled benchmark chunks, keep z<=5) and supplied through cold-v1's ROBUST_KEEP_ONLY_FILE hook -> 496/666 columns. Serving operating point is the rank-preserving batch-rank remap at a 12.5% per-request positive fraction; the upstream fixed 0.70 threshold puts ~100% of captured live chunks above 0.5, which would hard-gate the reward to 0.",
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -91,7 +91,7 @@ class Miner(BaseMinerNeuron):
                 "training_data_statement": (
                     "Trained exclusively on the public Poker44 training benchmark "
                     "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-28 (including v1.13), "
+                    "2026-07-31 (including v1.13), "
                     "each hand passed through the public prepare_hand_for_miner sanitizer so "
                     "training matches serving. See training/train_model_v2.py for training "
                     "(architecture adapted from UID85's public poker44-cold-poker2)."
@@ -103,7 +103,7 @@ class Miner(BaseMinerNeuron):
                 "data_attestation": (
                     "All training data comes from the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v13: cold-v1 retrained on the public benchmark through 2026-07-28 (64 releases) with the live-robust feature allowlist refreshed from our own 1420 captured validator chunks (z<=5 -> 493/666 columns). Honest holdout: reward 0.9316, AP 0.9748, recall@FPR<=0.05 0.8013. Serving: rank-preserving batch-rank remap at 12.5% (a labeled-holdout fraction sweep 0.10-0.30 was flat at 0.916-0.927, giving no reason to change from the 12.5% that scored 0.521 live in R2), empty chunk -> 0.1. DIAGNOSIS ON RECORD: uid242 R1 0.393 -> R2 0.521; the ~0.10 gap to top miners (~0.62) is live AP+bot_recall (65% of reward) which benchmark-trained ranking does not transfer - the benchmark cannot distinguish operating points, so cold is near its live ceiling (~0.52). Live round data also DISPROVED the 'live spread predicts score' thesis: artos (uid167) had the best live spread (std 0.24) but scored worst (0.325), while more-compressed cold/super_poker scored best.",
+                "notes": "uid242 v14: cold-v1 retrained on the public benchmark through 2026-07-31 (67 releases) with the live-robust feature allowlist refreshed from our own 1740 captured validator chunks (z<=5 -> 496/666 columns). Honest holdout (07-30/31): reward 0.9495, AP 0.9741, recall@FPR<=0.05 0.8618. Serving: rank-preserving batch-rank remap at 12.5% (prevalence sweep: 0.05 zero-gates 50%; 0.07-0.16 safe and near-flat; keep live-proven 12.5%). Capture check: 40/40 windows have >=1 positive; live scores remain compressed (med 0.71, std 0.02) so rank-map is required.",
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)

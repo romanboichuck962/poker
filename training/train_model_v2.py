@@ -45,12 +45,46 @@ warnings.filterwarnings(
 
 import numpy as np
 
-from poker44.score.scoring import reward, format_reward_breakdown
+from poker44.score.scoring import reward
+
+try:
+    from poker44.score.scoring import format_reward_breakdown
+except ImportError:  # subnet package may omit the pretty-printer helper
+    def format_reward_breakdown(
+        ap_score: float,
+        bot_recall: float,
+        *,
+        fpr: float = 0.0,
+        reward: float | None = None,
+    ) -> str:
+        ap = float(ap_score)
+        recall = float(bot_recall)
+        rew = float(reward) if reward is not None else 0.35 * ap + 0.30 * recall
+        return (
+            f"reward={rew:.4f} AP={ap:.4f} recall@FPR<=0.05={recall:.4f} "
+            f"fpr={float(fpr):.4f}"
+        )
 from poker44_ml.chunk_score_metrics import (
     human_bot_prob_bounds,
     print_chunk_score_diagnostics,
 )
-from poker44.utils.model_manifest import artifact_model_identity
+try:
+    from poker44.utils.model_manifest import artifact_model_identity
+except ImportError:
+    import re as _re
+
+    def artifact_model_identity(artifact_path: str | Path) -> Dict[str, str]:
+        path = Path(artifact_path)
+        stem = (path.stem or "poker44-model").strip()
+        version = "1"
+        match = _re.search(r"_v(\d+)$", stem, _re.IGNORECASE)
+        if match:
+            version = match.group(1)
+        return {
+            "model_name": stem,
+            "model_version": version,
+            "artifact_filename": path.name,
+        }
 from poker44_ml.calibration import BlendedIsotonicCalibrator
 from poker44_ml.inference import Poker44Model
 from poker44_ml.stacked import StackedEnsemble
