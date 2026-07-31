@@ -1,4 +1,4 @@
-"""Poker44 miner serving a trained bot-detection model (see model.py / train.py).
+"""Poker44 miner serving UID237's training-free M3-GB luck detector.
 
 Falls back to a neutral 0.5 score for any chunk the model fails to score.
 Run with the Poker44-subnet package installed (pip install -e Poker44-subnet).
@@ -25,15 +25,17 @@ from poker44.utils.model_manifest import (
 )
 from poker44.validator.synapse import DetectionSynapse
 
-from model_cold import MODEL_ARTIFACT, Poker44Model
+from model_luck import MODEL_ARTIFACT, Poker44Model
 from capture import capture_chunks
 
 REPO_ROOT = Path(__file__).resolve().parent
 
 
-def _sha256(path: Path) -> str:
+def _sha256(path: Path | None) -> str:
+    if path is None or not Path(path).is_file():
+        return ""
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with Path(path).open("rb") as handle:
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
@@ -67,21 +69,31 @@ class Miner(BaseMinerNeuron):
     def __init__(self, config=None):
         super().__init__(config=config)
         self.model = Poker44Model()
-        bt.logging.info(f"🤖 Poker44 trained-model miner started (artifact={MODEL_ARTIFACT.name})")
+        bt.logging.info(
+            f"🤖 Poker44 jet M3-GB miner started (backend={getattr(self.model, 'backend', 'luck')})"
+        )
 
         self.model_manifest = build_local_model_manifest(
             repo_root=REPO_ROOT,
             implementation_files=[
                 REPO_ROOT / "miner.py",
-                REPO_ROOT / "model_cold.py",
-                REPO_ROOT / "poker44_ml" / "inference.py",
-                REPO_ROOT / "poker44_ml" / "features.py",
-                REPO_ROOT / "poker44_ml" / "stacked.py",
+                REPO_ROOT / "model_luck.py",
+                REPO_ROOT / "poker44_ml" / "luck_detector.py",
             ],
             defaults={
-                "model_name": "poker44-neptune-cold",
-                "model_version": "14",
-                "framework": "poker44-cold-v1 (UID142's stacked-v3 architecture, vendored under poker44_ml/ from https://github.com/david10301-code/Poker44-cold-poker1 @9c605deb35, MIT - see LICENSE-uid85): 666 chunk features (40 per-hand scalars x 7 order-stats + 12 replay-signature shares + 373 fixed-vocabulary action n-grams + hand_count); base learners LightGBM+XGBoost+CatBoost+ExtraTrees+RandomForest stacked via 5-fold OOF into a LogisticRegression meta with hard-bot focal reweighting (2.5/gamma 2.0) and human weight 1.3; blended isotonic calibration (0.5); sanitized train==serve. KEY DIFFERENCE vs upstream: instead of their hardcoded robust-feature blocklist (measured on their captures from 2026-07-06/07), the feature set is re-derived from OUR OWN captured live validator chunks via their z-score method (z=|mean_live-mean_bench|/std_bench over size-matched pooled benchmark chunks, keep z<=5) and supplied through cold-v1's ROBUST_KEEP_ONLY_FILE hook -> 496/666 columns. Serving operating point is the rank-preserving batch-rank remap at a 12.5% per-request positive fraction; the upstream fixed 0.70 threshold puts ~100% of captured live chunks above 0.5, which would hard-gate the reward to 0.",
+                "model_name": os.getenv("POKER44_MODEL_NAME", "jet-markovpot-gb-detector-3"),
+                "model_version": os.getenv("POKER44_MODEL_VERSION", "3.7.3"),
+                "framework": (
+                    "markov-pot-geometry-gb / M3-GB (UID237 jet-detector-3 @2df44d27, "
+                    "MIT - see LICENSE-uid237 / ATTRIBUTION-uid237.md): training-free "
+                    "chunk scorer combining Markov action-transition entropy deficit, "
+                    "pot bet/pot CV regularity, signature concentration, and street "
+                    "uniformity via weighted geometric blend + smoothstep anchors "
+                    "[0.24, 0.80]. No joblib artifact. Serving adds rank-preserving "
+                    "batch-rank remap (POKER44_BATCH_RANK) at POKER44_MAX_POS_FRAC so "
+                    "the live validator threshold_sanity gate stays safe without "
+                    "changing ranking."
+                ),
                 "license": "MIT",
                 "repo_url": "https://github.com/romanboichuck962/poker",
                 "repo_commit": os.getenv("POKER44_MODEL_REPO_COMMIT") or _git_commit(REPO_ROOT),
@@ -89,21 +101,27 @@ class Miner(BaseMinerNeuron):
                 "inference_mode": "remote",
                 "artifact_sha256": _sha256(MODEL_ARTIFACT),
                 "training_data_statement": (
-                    "Trained exclusively on the public Poker44 training benchmark "
-                    "(https://api.poker44.net/api/v1/benchmark), releases through "
-                    "2026-07-31 (including v1.13), "
-                    "each hand passed through the public prepare_hand_for_miner sanitizer so "
-                    "training matches serving. See training/train_model_v2.py for training "
-                    "(architecture adapted from UID85's public poker44-cold-poker2)."
+                    "Training-free heuristic (UID237 M3-GB). Operating point "
+                    "(POKER44_MAX_POS_FRAC) calibrated on the public Poker44 "
+                    "training benchmark (https://api.poker44.net/api/v1/benchmark) "
+                    "releases through 2026-07-31 plus unlabeled live captures for "
+                    "zero-gate checks. No supervised fit on labels."
                 ),
                 "training_data_sources": ["https://api.poker44.net/api/v1/benchmark"],
                 "private_data_attestation": (
                     "This miner does not train on validator-only evaluation data."
                 ),
                 "data_attestation": (
-                    "All training data comes from the public Poker44 benchmark API."
+                    "Heuristic scoring; calibration uses the public Poker44 benchmark API."
                 ),
-                "notes": "uid242 v14: cold-v1 retrained on the public benchmark through 2026-07-31 (67 releases) with the live-robust feature allowlist refreshed from our own 1740 captured validator chunks (z<=5 -> 496/666 columns). Honest holdout (07-30/31): reward 0.9495, AP 0.9741, recall@FPR<=0.05 0.8618. Serving: rank-preserving batch-rank remap at 12.5% (prevalence sweep: 0.05 zero-gates 50%; 0.07-0.16 safe and near-flat; keep live-proven 12.5%). Capture check: 40/40 windows have >=1 positive; live scores remain compressed (med 0.71, std 0.02) so rank-map is required.",
+                "notes": (
+                    "uid242: switched from cold-v14 to UID237's jet-markovpot-gb-detector-3 "
+                    "(M3-GB @2df44d27). Training-free; anchors kept at upstream 0.24/0.80. "
+                    "Holdout 07-30/31 (n=304): raw AP 0.735, raw reward 0.455 (tsq-limited); "
+                    "batch-rank@0.125 window mean ~0.58. Captures (n=1740): raw med 0.35, "
+                    "std 0.09, ~10% >=0.5 — rank-map required. Prevalence sweep keeps "
+                    "POKER44_MAX_POS_FRAC=0.125 (40/40 capture windows have >=1 positive)."
+                ),
             },
         )
         self.manifest_compliance = evaluate_manifest_compliance(self.model_manifest)
