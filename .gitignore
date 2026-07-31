@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 captures/
+poker44_ml_artos_backup/
 
-# backup artifacts (not served)
+# backup / upstream artifacts (not served)
 artifacts/*_backup.joblib
+artifacts/*_upstream.joblib

@@ -1,140 +1,343 @@
-"""The serving path — the only place a score is ever produced.
-
-Training, walk-forward and the miner all score through ``Detector`` so an
-offline number and a live number can never diverge. If you find yourself
-calling ``ensemble.score`` directly outside this module, you have created a
-train/serve skew bug.
-"""
-
 from __future__ import annotations
 
+import inspect
+import math
 import time
+import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any
 
 import numpy as np
 
-from poker44_ml.features import feature_matrix
-from poker44_ml.policy import chunk_tie_key, rank_map
+# Cosmetic noise from LightGBM<->sklearn 1.7 feature-name validation. Numpy
+# rows we pass to predict_proba are correctly aligned by index; the warning
+# only fires because LightGBM 4.x stores a feature signature on fit.
+warnings.filterwarnings(
+    "ignore",
+    message="X does not have valid feature names",
+    category=UserWarning,
+)
+
+from poker44_ml.calibration import ScoreCalibrator
+from poker44_ml.features import chunk_features
 
 try:
     import joblib
 except ImportError:  # pragma: no cover
     joblib = None
 
-# Below this many chunks the within-batch policy has too little to rank, so the
-# raw score passes through. Live requests carry ~100 chunks; this only guards
-# single-chunk debugging calls.
-MIN_BATCH_FOR_POLICY = 8
+# Decimal places for miner debug logs (raw / remap / final components).
+SCORE_LOG_DECIMALS = 8
 
 
-class Detector:
-    """Load an artifact and score chunks exactly as the miner will."""
+class Poker44Model:
+    """Small runtime wrapper for the rebuilt supervised Poker44 artifact."""
 
-    def __init__(self, artifact: Dict[str, Any]):
-        self.ensemble = artifact["ensemble"]
-        self.feature_names: List[str] = list(artifact["feature_names"])
-        self.metadata: Dict[str, Any] = dict(artifact.get("metadata") or {})
-        self.positive_fraction = float(self.metadata.get("positive_fraction", 0.10))
-        if not 0.0 < self.positive_fraction < 1.0:
-            raise ValueError(
-                f"positive_fraction must be in (0,1), got {self.positive_fraction}"
-            )
-        if not self.feature_names:
-            raise ValueError("artifact carries no feature_names")
-
-    @classmethod
-    def load(cls, path: str | Path) -> "Detector":
+    def __init__(self, model_path: str | Path):
         if joblib is None:
-            raise RuntimeError("joblib is required to load an artifact")
-        path = Path(path)
-        if not path.exists():
-            raise FileNotFoundError(
-                f"artifact not found: {path}. Train first: python -m poker44_ml.train"
-            )
-        return cls(joblib.load(path))
+            raise RuntimeError("joblib is required to load Poker44 models.")
+        self.model_path = Path(model_path)
+        if not self.model_path.exists():
+            raise FileNotFoundError(f"Model artifact not found: {self.model_path}")
 
-    # ------------------------------------------------------------------ score
+        artifact = joblib.load(self.model_path)
+        self.models = list(artifact.get("models") or [])
+        if not self.models and artifact.get("model") is not None:
+            self.models = [artifact["model"]]
+        if not self.models:
+            raise RuntimeError("Model artifact contains no models.")
 
-    def raw_scores(self, chunks: Sequence[Sequence[Dict[str, Any]]]) -> np.ndarray:
-        """Blended within-batch rank score, before the 0.5 line is placed."""
-        if not chunks:
-            return np.zeros(0, dtype=float)
-        rows = np.asarray(
-            feature_matrix(chunks, self.feature_names), dtype=np.float64
+        self.feature_names = list(artifact.get("feature_names") or [])
+        self.metadata = dict(artifact.get("metadata") or {})
+        self.calibrator = artifact.get("calibrator")
+        self.score_logit_bias = float(self.metadata.get("score_logit_bias", 0.0) or 0.0)
+        self.score_logit_temperature = max(
+            float(self.metadata.get("score_logit_temperature", 1.0) or 1.0),
+            1e-6,
         )
-        rows = np.nan_to_num(rows, nan=0.0, posinf=0.0, neginf=0.0)
-        return np.asarray(self.ensemble.score(rows), dtype=float)
+        score_remap = self.metadata.get("score_remap")
+        if isinstance(score_remap, dict) and score_remap.get("kind"):
+            self.score_remap: dict[str, Any] = score_remap
+        elif (
+            isinstance(self.calibrator, dict)
+            and self.calibrator.get("kind") == "threshold_logit_v1"
+        ):
+            # Legacy artifacts stored score_remap in calibrator; apply once via score_remap.
+            self.score_remap = dict(self.calibrator)
+            self.calibrator = None
+        else:
+            self.score_remap = {}
+        # Reward-aware, FPR-capped calibrator embedded at training time. When
+        # present it SUPERSEDES the fixed score_remap + score_logit stages
+        # (which the trainer disables), applying its own monotone
+        # spread -> isotonic -> remap -> logit-shift block instead. Restored from
+        # metadata so old artifacts without it fall back to the legacy pipeline.
+        self.score_calibrator = ScoreCalibrator.from_dict(
+            self.metadata.get("score_calibrator")
+        )
+        self.model_weights = list(
+            artifact.get("model_weights")
+            or self.metadata.get("model_weights")
+            or [1.0 for _ in self.models]
+        )
 
-    def predict_chunk_scores(
+    @staticmethod
+    def _clamp01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    @staticmethod
+    def _sigmoid(value: float) -> float:
+        value = max(-40.0, min(40.0, float(value)))
+        return 1.0 / (1.0 + math.exp(-value))
+
+    def _aligned_rows(self, chunks: list[list[dict[str, Any]]]) -> list[list[float]]:
+        rows: list[list[float]] = []
+        for chunk in chunks:
+            features = chunk_features(chunk)
+            features["hand_count"] = float(len(chunk))
+            if not self.feature_names:
+                self.feature_names = sorted(features)
+            rows.append([float(features.get(name, 0.0)) for name in self.feature_names])
+        return rows
+
+    def _model_column(
         self,
-        chunks: Sequence[Sequence[Dict[str, Any]]],
+        model: Any,
+        rows: list[list[float]],
+        chunks: list[list[dict[str, Any]]] | None,
+        apply_calibration: bool,
+    ) -> list[float]:
+        """Score ONE base model into a per-row column.
+
+        Single source of truth for per-model dispatch, shared by
+        ``_raw_model_scores`` and ``_raw_model_score_stages`` so they cannot
+        drift. ``apply_calibration`` is forwarded only to learners whose
+        ``predict_chunk_scores`` accepts it (stacked learners); the probe order
+        degrades gracefully for every other signature.
+        """
+        if (
+            chunks is not None
+            and hasattr(model, "predict_chunk_scores")
+            and not isinstance(model, type(self))
+        ):
+            for call_kwargs in (
+                {"feature_rows": rows, "apply_calibration": apply_calibration},
+                {"feature_rows": rows},
+                {"apply_calibration": apply_calibration},
+                {},
+            ):
+                try:
+                    raw = model.predict_chunk_scores(chunks, **call_kwargs)
+                    return [self._clamp01(float(value)) for value in raw]
+                except TypeError:
+                    continue
+        if hasattr(model, "predict_proba"):
+            return [self._clamp01(row[1]) for row in model.predict_proba(rows)]
+        if hasattr(model, "decision_function"):
+            return [self._sigmoid(value) for value in model.decision_function(rows)]
+        return [self._clamp01(value) for value in model.predict(rows)]
+
+    @staticmethod
+    def _accepts_apply_calibration(fn: Any) -> bool:
+        """True if ``fn`` declares an ``apply_calibration`` parameter."""
+        try:
+            return "apply_calibration" in inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            return False
+
+    def _raw_model_scores(
+        self,
+        rows: list[list[float]],
+        chunks: list[list[dict[str, Any]]] | None = None,
         *,
-        apply_policy: bool = True,
-    ) -> List[float]:
-        """One risk score per chunk. Length always equals ``len(chunks)``."""
+        apply_calibration: bool = True,
+    ) -> list[float]:
+        per_model = [
+            self._model_column(model, rows, chunks, apply_calibration)
+            for model in self.models
+        ]
+        return self._blend_per_model(per_model, len(rows))
+
+    def _blend_per_model(
+        self, per_model: list[list[float]], n_rows: int
+    ) -> list[float]:
+        """Weighted-mean blend of per-model score columns."""
+        weights = [max(0.0, float(value)) for value in self.model_weights[: len(per_model)]]
+        if len(weights) != len(per_model) or sum(weights) <= 0.0:
+            weights = [1.0 for _ in per_model]
+        total_weight = sum(weights)
+
+        scores: list[float] = []
+        for row_index in range(n_rows):
+            value = sum(
+                weight * model_scores[row_index]
+                for weight, model_scores in zip(weights, per_model)
+            ) / total_weight
+            scores.append(self._clamp01(value))
+        return scores
+
+    def _raw_model_score_stages(
+        self,
+        rows: list[list[float]],
+        chunks: list[list[dict[str, Any]]] | None = None,
+    ) -> tuple[list[float], list[float]]:
+        """Blended (pre-calibration, calibrated) scores from ONE base pass per model.
+
+        Correct-by-construction equal to ``(_raw_model_scores(apply_calibration=
+        False), _raw_model_scores(apply_calibration=True))``: a stacked learner
+        returns both meta-head stages from a SINGLE base pass via
+        ``predict_chunk_score_stages``; a learner whose ``predict_chunk_scores``
+        is calibration-aware but lacks that method is scored twice (it cannot
+        single-pass); every other learner has no internal calibrator, so its two
+        stages are one column (single pass).
+        """
+        per_model_precal: list[list[float]] = []
+        per_model_cal: list[list[float]] = []
+        for model in self.models:
+            precal: list[float] | None = None
+            cal: list[float] | None = None
+            # Fast path: one base pass yields both stages.
+            if (
+                chunks is not None
+                and not isinstance(model, type(self))
+                and hasattr(model, "predict_chunk_score_stages")
+            ):
+                try:
+                    p, c = model.predict_chunk_score_stages(chunks, feature_rows=rows)
+                    precal = [self._clamp01(float(v)) for v in p]
+                    cal = [self._clamp01(float(v)) for v in c]
+                except TypeError:
+                    precal = cal = None
+            if cal is None:
+                cal = self._model_column(model, rows, chunks, apply_calibration=True)
+                if (
+                    chunks is not None
+                    and not isinstance(model, type(self))
+                    and hasattr(model, "predict_chunk_scores")
+                    and self._accepts_apply_calibration(model.predict_chunk_scores)
+                ):
+                    # Calibration-aware but no single-pass stages: the
+                    # pre-calibration column needs its own pass.
+                    precal = self._model_column(
+                        model, rows, chunks, apply_calibration=False
+                    )
+                else:
+                    # No internal calibrator -> both stages are identical.
+                    precal = cal
+            per_model_precal.append(precal)
+            per_model_cal.append(cal)
+        return (
+            self._blend_per_model(per_model_precal, len(rows)),
+            self._blend_per_model(per_model_cal, len(rows)),
+        )
+
+    def _apply_calibrator(self, scores: list[float]) -> list[float]:
+        if not scores or self.calibrator is None:
+            return [self._clamp01(value) for value in scores]
+        if hasattr(self.calibrator, "predict_proba"):
+            calibrated = self.calibrator.predict_proba([[float(value)] for value in scores])
+            return [self._clamp01(row[1]) for row in calibrated]
+        if hasattr(self.calibrator, "transform"):
+            return [self._clamp01(value) for value in self.calibrator.transform(scores)]
+        return [self._clamp01(value) for value in scores]
+
+    def _apply_score_remap(self, scores: list[float]) -> list[float]:
+        if not scores or not self.score_remap:
+            return [self._clamp01(value) for value in scores]
+        if self.score_remap.get("kind") != "threshold_logit_v1":
+            return [self._clamp01(value) for value in scores]
+        try:
+            threshold = float(self.score_remap.get("threshold", 0.5))
+            temperature = max(float(self.score_remap.get("temperature", 0.25)), 1e-6)
+        except (TypeError, ValueError):
+            return [self._clamp01(value) for value in scores]
+        output: list[float] = []
+        for value in scores:
+            clipped = max(1e-6, min(1.0 - 1e-6, float(value)))
+            adjusted = (clipped - threshold) / temperature
+            output.append(self._clamp01(1.0 / (1.0 + math.exp(-adjusted))))
+        return output
+
+    def _apply_score_logit(self, scores: list[float]) -> list[float]:
+        if not scores:
+            return []
+        if abs(self.score_logit_bias) < 1e-12 and abs(self.score_logit_temperature - 1.0) < 1e-12:
+            return [self._clamp01(value) for value in scores]
+        output: list[float] = []
+        for score in scores:
+            value = max(1e-6, min(1.0 - 1e-6, float(score)))
+            logit = math.log(value / (1.0 - value))
+            adjusted = (logit + self.score_logit_bias) / self.score_logit_temperature
+            output.append(self._clamp01(1.0 / (1.0 + math.exp(-adjusted))))
+        return output
+
+    def _apply_score_calibrator(self, scores: list[float]) -> list[float]:
+        if not scores or self.score_calibrator is None:
+            return [self._clamp01(value) for value in scores]
+        transformed = self.score_calibrator.transform(scores)
+        return [self._clamp01(float(value)) for value in transformed]
+
+    def predict_chunk_scores(self, chunks: list[list[dict[str, Any]]]) -> list[float]:
         if not chunks:
             return []
+        rows = self._aligned_rows(chunks)
+        raw_scores = self._raw_model_scores(rows, chunks=chunks)
+        calibrated_scores = self._apply_calibrator(raw_scores)
+        remapped_scores = self._apply_score_remap(calibrated_scores)
+        logit_scores = self._apply_score_logit(remapped_scores)
+        final_scores = self._apply_score_calibrator(logit_scores)
+        return [round(self._clamp01(value), 6) for value in final_scores]
 
-        raw = self.raw_scores(chunks)
-        if not apply_policy or len(raw) < MIN_BATCH_FOR_POLICY:
-            return [round(float(np.clip(v, 0.0, 1.0)), 8) for v in raw]
-
-        keys = [chunk_tie_key(chunk) for chunk in chunks]
-        mapped = rank_map(raw, self.positive_fraction, tie_keys=keys)
-        return [round(float(np.clip(v, 0.0, 1.0)), 8) for v in mapped]
-
-    def predict_chunk_score(self, chunk: Sequence[Dict[str, Any]]) -> float:
-        scores = self.predict_chunk_scores([chunk], apply_policy=False)
+    def predict_chunk_score(self, chunk: list[dict[str, Any]]) -> float:
+        scores = self.predict_chunk_scores([chunk])
         return scores[0] if scores else 0.5
 
-    # ------------------------------------------------------------ diagnostics
+    def _round_score_log_values(self, scores: list[float]) -> list[float]:
+        places = int(SCORE_LOG_DECIMALS)
+        return [round(float(value), places) for value in scores]
 
-    def drift_report(
+    def debug_score_components(
         self,
-        chunks: Sequence[Sequence[Dict[str, Any]]],
-    ) -> Dict[str, float]:
-        """How far this batch sits outside the training feature distribution.
-
-        The benchmark and live traffic differ in chunk size and pot scale, so a
-        live batch that reads far outside training quantiles is the early warning
-        that an artifact has gone stale — visible before the leaderboard shows it.
-        Requires an artifact trained with reference quantiles recorded.
-        """
-        reference = self.metadata.get("feature_reference")
-        if not reference or not chunks:
+        chunks: list[list[dict[str, Any]]],
+    ) -> dict[str, list[float]]:
+        if not chunks:
             return {}
-
-        rows = np.asarray(feature_matrix(chunks, self.feature_names), dtype=np.float64)
-        rows = np.nan_to_num(rows, nan=0.0, posinf=0.0, neginf=0.0)
-        q01 = np.asarray(reference["q01"], dtype=float)
-        q99 = np.asarray(reference["q99"], dtype=float)
-        median = np.asarray(reference["median"], dtype=float)
-        iqr = np.maximum(
-            np.asarray(reference["q75"], dtype=float)
-            - np.asarray(reference["q25"], dtype=float),
-            1e-9,
+        rows = self._aligned_rows(chunks)
+        # Diagnostic-only path (gated by POKER44_LOG_SCORE_COMPONENTS). The
+        # submitted score in predict_chunk_scores is unchanged.
+        #   raw_scores        = pre-calibration stacked (meta) score
+        #   calibrated_scores = + stack calibrator (isotonic, internal to a
+        #                         stacked artifact)
+        #   remapped_scores   = + score_remap
+        #   final_scores      = + score_logit  (what the validator rounds at 0.5)
+        # Both stages come from a SINGLE base pass (no double scoring).
+        precal_scores, internal_calibrated = self._raw_model_score_stages(
+            rows, chunks=chunks
         )
-        outside = (rows < q01) | (rows > q99)
-        shift = np.abs(np.median(rows, axis=0) - median) / iqr
+        calibrated_scores = self._apply_calibrator(internal_calibrated)
+        remapped_scores = self._apply_score_remap(calibrated_scores)
+        logit_scores = self._apply_score_logit(remapped_scores)
+        final_scores = self._apply_score_calibrator(logit_scores)
         return {
-            "outside_q01_q99_rate": float(outside.mean()),
-            "features_mostly_outside": int(np.sum(outside.mean(axis=0) > 0.5)),
-            "median_shift_iqr": float(np.median(shift)),
-            "p90_shift_iqr": float(np.quantile(shift, 0.90)),
+            "raw_scores": self._round_score_log_values(precal_scores),
+            "calibrated_scores": self._round_score_log_values(calibrated_scores),
+            "remapped_scores": self._round_score_log_values(remapped_scores),
+            "final_scores": self._round_score_log_values(final_scores),
         }
 
     def benchmark_latency(
         self,
-        chunks: Sequence[Sequence[Dict[str, Any]]],
-        repeats: int = 3,
-    ) -> Dict[str, float]:
-        """Wall-clock per request. The validator times out at 180s."""
+        chunks: list[list[dict[str, Any]]],
+        repeats: int = 5,
+    ) -> dict[str, float]:
         if not chunks:
-            return {"total_ms": 0.0, "per_chunk_ms": 0.0}
+            return {"latency_per_chunk_ms": 0.0, "total_latency_ms": 0.0}
         repeats = max(1, int(repeats))
         started = time.perf_counter()
         for _ in range(repeats):
             self.predict_chunk_scores(chunks)
-        total_ms = (time.perf_counter() - started) * 1000.0 / repeats
-        return {"total_ms": total_ms, "per_chunk_ms": total_ms / len(chunks)}
+        elapsed_ms = (time.perf_counter() - started) * 1000.0 / repeats
+        return {
+            "latency_per_chunk_ms": elapsed_ms / max(len(chunks), 1),
+            "total_latency_ms": elapsed_ms,
+        }
