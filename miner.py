@@ -140,35 +140,31 @@ class Miner(BaseMinerNeuron):
         started = time.monotonic()
         try:
             scores = self.model.score_chunks(chunks)
-        except Exception as err:
-            bt.logging.error(f"model.score_chunks failed: {err}; returning 0.5")
+        except Exception as err:  # never fail the synapse on a scoring error
+            bt.logging.error(f"model scoring failed, using neutral scores: {err}")
             scores = [0.5] * len(chunks)
-        if len(scores) != len(chunks):
-            bt.logging.error(
-                f"score/chunk length mismatch ({len(scores)} vs {len(chunks)}); padding 0.5"
-            )
-            scores = list(scores)[: len(chunks)] + [0.5] * max(0, len(chunks) - len(scores))
-        synapse.risk_scores = [float(max(0.0, min(1.0, s))) for s in scores]
-        synapse.model_manifest = self.model_manifest
-        elapsed_ms = (time.monotonic() - started) * 1000.0
-        bt.logging.debug(
-            f"scored {len(chunks)} chunks in {elapsed_ms:.1f}ms "
-            f"digest={self.manifest_digest[:12]}"
-        )
         # Input-only, best-effort capture of the live eval distribution for
-        # offline diagnosis. Never affects the returned scores.
+        # offline benchmark->live feature-shift analysis. Never affects scoring.
         capture_chunks(chunks)
+        synapse.risk_scores = [float(s) for s in scores]
+        synapse.predictions = [s >= 0.5 for s in scores]
+        synapse.model_manifest = dict(self.model_manifest)
+        bt.logging.info(
+            f"Scored {len(chunks)} chunks in {time.monotonic() - started:.3f}s "
+            f"(flagged={sum(synapse.predictions)})"
+        )
         return synapse
 
     async def blacklist(self, synapse: DetectionSynapse) -> Tuple[bool, str]:
-        return await self.blacklist_fn(synapse)
+        return self.common_blacklist(synapse)
 
     async def priority(self, synapse: DetectionSynapse) -> float:
-        return await self.priority_fn(synapse)
+        return self.caller_priority(synapse)
 
 
 if __name__ == "__main__":
     with Miner() as miner:
+        bt.logging.info("Poker44 trained-model miner running...")
         while True:
-            bt.logging.info(f"Miner UID: {miner.uid} | Incentive: {miner.incentive}")
+            bt.logging.info(f"Miner UID: {miner.uid} | Incentive: {miner.metagraph.I[miner.uid]}")
             time.sleep(5 * 60)
